@@ -1,5 +1,33 @@
 const API_BASE_URL = 'http://127.0.0.1:8001';
 const COMPRAS_API_URL = 'http://127.0.0.1:8080/api';
+const STATS_BASE_URL = "http://localhost:8081/estadisticas";
+
+export const fetchArtistSongs = async (artistEmail) => {
+  try {
+    const response = await fetch(`${COMPRAS_API_URL}/artistas/${encodeURIComponent(artistEmail)}/canciones`);
+    if (!response.ok) {
+      throw new Error(`Error ${response.status}: ${response.statusText}`);
+    }
+    return response.json();
+  } catch (error) {
+    console.error('Error fetching artist songs:', error);
+    throw error;
+  }
+};
+
+export const fetchArtistAlbums = async (artistEmail) => {
+  try {
+    const response = await fetch(`${COMPRAS_API_URL}/artistas/${encodeURIComponent(artistEmail)}/albumes`);
+    if (!response.ok) {
+      throw new Error(`Error ${response.status}: ${response.statusText}`);
+    }
+    return response.json();
+  } catch (error) {
+    console.error('Error fetching artist albums:', error);
+    throw error;
+  }
+};
+
 
 export const fetchData = async (endpoint) => {
   try {
@@ -121,4 +149,88 @@ export const deleteArtist = async (email) => {
     throw new Error(`Error ${response.status}: ${response.statusText}`);
   }
   return response.json();
+};
+
+// ==========================================
+// 📊 MICROSERVICIO DE ESTADÍSTICAS (8081)
+// ==========================================
+
+
+export const fetchAllSongStats = async (startDate, endDate) => {
+  try {
+    let url = `${STATS_BASE_URL}/canciones`;
+    if (startDate && endDate) {
+        url += `?fechaInicio=${startDate}&fechaFin=${endDate}`;
+    }
+    const response = await fetch(url);
+    if (!response.ok) throw new Error("Error fetching song stats");
+    return await response.json();
+  } catch (error) {
+    console.error("❌ Error en fetchAllSongStats:", error);
+    return []; 
+  }
+};
+
+export const fetchAllAlbumStats = async (startDate, endDate) => {
+  try {
+    let url = `${STATS_BASE_URL}/albumes`;
+    if (startDate && endDate) {
+        url += `?fechaInicio=${startDate}&fechaFin=${endDate}`;
+    }
+    const response = await fetch(url);
+    if (!response.ok) throw new Error("Error fetching album stats");
+    return await response.json();
+  } catch (error) {
+    console.error("❌ Error en fetchAllAlbumStats:", error);
+    return [];
+  }
+};
+
+export const fileURL = (relativePath) => {
+  if (!relativePath) return null;
+  
+  // Si ya es una URL completa, devolverla
+  if (relativePath.startsWith("http")) {
+    return relativePath;
+  }
+
+  // TRUCO: Usamos la constante que ya tienes, pero le borramos "/api"
+  // http://127.0.0.1:8080/api  --->  http://127.0.0.1:8080
+  const rootUrl = COMPRAS_API_URL.replace('/api', '');
+
+  // Aseguramos que el path empiece con barra /
+  const cleanPath = relativePath.startsWith("/") ? relativePath : `/${relativePath}`;
+  
+  return `${rootUrl}${cleanPath}`;
+};
+export const postSongReproduction = async (idCancion, emailUser) => {
+  // 1. LOG DE CONTROL: Si ves esto en la consola, la función arrancó
+  console.log("🔥 [API] Ejecutando postSongReproduction. ID:", idCancion);
+
+  try {
+    // 2. URL "HARDCODED" (Escrita directa para evitar errores de variables)
+    const url = "http://localhost:8081/reproducciones";
+    
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        idCancion: idCancion,
+        emailUser: emailUser || "anonimo"
+      })
+    });
+
+    // 3. LOG DE RESPUESTA
+    if (response.ok) {
+        console.log("✅ [API] Guardado en 8081 correctamente");
+    } else {
+        console.error(`❌ [API] Error del servidor 8081: ${response.status}`);
+    }
+
+    return await response.json();
+
+  } catch (error) {
+    // 4. LOG DE ERROR DE RED
+    console.error("💥 [API] Error FATAL de conexión (¿El 8081 está apagado?):", error);
+  }
 };

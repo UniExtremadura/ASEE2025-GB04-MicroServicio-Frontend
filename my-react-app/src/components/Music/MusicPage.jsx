@@ -15,6 +15,7 @@ import PublicAlbumCatalog from "./PublicAlbumCatalog";
 import PublicAlbumDetail from "./PublicAlbumDetail";
 import PlaylistsPage from "./PlaylistsPage";
 import PlaylistDetailPage from "./PlaylistDetailPage";
+import ArtistStatsPanel from "./ArtistStatsPanel"; // Importar el nuevo componente
 
 import "../../styles/MusicGlobal.css";
 
@@ -162,6 +163,7 @@ function MusicPage() {
   const isAlbumView = viewMode === "albums" || viewMode === "album";
   const isPlaylistsView = viewMode === "playlists" || viewMode === "playlist";
   const isArtistPanelView = viewMode === "artist_panel";
+  const isStatsView = viewMode === "stats"; // Nuevo estado de vista
 
   return (
     <div className="App">
@@ -218,6 +220,14 @@ function MusicPage() {
                   onClick={() => setViewMode("artist_panel")}
                 >
                   ✏️ Gestionar Música
+                </button>
+                <button
+                  type="button"
+                  className={`btn-mode ${isStatsView ? "active" : ""}`}
+                  style={{ marginLeft: '10px', backgroundColor: isStatsView ? '#fff' : 'rgba(0,0,0,0.2)', borderColor: '#fff' }}
+                  onClick={() => setViewMode("stats")}
+                >
+                  📈 Panel de estadísticas
                 </button>
                 <button
                   type="button"
@@ -348,6 +358,11 @@ function MusicPage() {
             )}
           </div>
         </>
+      )}
+
+      {/* Nuevo panel de estadísticas */}
+      {artistEmail && viewMode === "stats" && (
+        <ArtistStatsPanel artistEmail={artistEmail} />
       )}
     </div>
   );
