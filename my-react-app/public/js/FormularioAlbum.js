@@ -7,8 +7,15 @@
 // - Permite seleccionar canciones y géneros.
 // - Muestra una previsualización de la portada del álbum.
 // - Envía todo al endpoint /api/albumes usando el JWT guardado en localStorage.
+// - Inicializa estadísticas del álbum en el microservicio de estadísticas.
+//
 
-const API_BASE = "http://127.0.0.1:8080"; // mismo que en FormularioSubidaCancion.js
+// Backend principal (álbumes, canciones, géneros)
+const API_BASE = "http://127.0.0.1:8080";
+
+// Backend de estadísticas
+const API_STATS = "http://127.0.0.1:8081";
+
 
 document.addEventListener("DOMContentLoaded", () => {
   // --- Referencias al DOM ---
@@ -16,20 +23,14 @@ document.addEventListener("DOMContentLoaded", () => {
   const imgPortadaInput = document.getElementById("imgPortada");
   const previewImg = document.getElementById("previewAlbumImg");
 
-  // Lista de canciones
-  const cancionesContainer = document.getElementById(
-    "canciones-list-container",
-  );
+  const cancionesContainer = document.getElementById("canciones-list-container");
   const songsInvalid = document.getElementById("songsInvalid");
 
-  // Géneros (mismo estilo de “cuadraditos” que en subida de canción)
   const genreGrid = document.getElementById("genreGrid");
   const genreInvalid = document.getElementById("genreInvalid");
 
   if (!form) {
-    console.error(
-      'El formulario con ID "uploadAlbumForm" no se encontró. Verifica el HTML.',
-    );
+    console.error('El formulario con ID "uploadAlbumForm" no se encontró.');
     return;
   }
 
@@ -38,28 +39,21 @@ document.addEventListener("DOMContentLoaded", () => {
   // -------------------------------------------------------------
   function getArtistaIdFromToken() {
     const token = localStorage.getItem("authToken");
-    if (!token) {
-      console.error("No hay token de sesión");
-      return null;
-    }
+    if (!token) return null;
 
     try {
-      // Decodificar el token JWT (el payload está en la segunda parte)
-      const payload = JSON.parse(atob(token.split('.')[1]));
-      // Asumiendo que el token tiene un campo 'sub' o 'id' con el ID del artista
+      const payload = JSON.parse(atob(token.split(".")[1]));
       return payload.sub || payload.id || payload.artistaId;
-    } catch (error) {
-      console.error("Error al decodificar el token:", error);
+    } catch (e) {
+      console.error("Error al decodificar el token:", e);
       return null;
     }
   }
 
   // -------------------------------------------------------------
-  // 1) Cargar canciones existentes para poder seleccionarlas
+  // 1) Cargar canciones existentes
   // -------------------------------------------------------------
   function cargarCanciones() {
-    if (!cancionesContainer) return;
-
     const artistaId = getArtistaIdFromToken();
     if (!artistaId) {
       cancionesContainer.innerHTML =
@@ -73,16 +67,14 @@ document.addEventListener("DOMContentLoaded", () => {
       '<div class="text-muted p-3">Cargando canciones...</div>';
 
     fetch(urlCanciones)
-      .then((response) => {
-        if (!response.ok) {
-          throw new Error(`Error al cargar canciones: ${response.status}`);
-        }
-        return response.json();
+      .then((r) => {
+        if (!r.ok) throw new Error(`Error al cargar canciones: ${r.status}`);
+        return r.json();
       })
       .then((canciones) => {
         cancionesContainer.innerHTML = "";
 
-        if (!canciones || canciones.length === 0) {
+        if (!canciones.length) {
           cancionesContainer.innerHTML =
             '<div class="text-muted p-3">No hay canciones disponibles.</div>';
           return;
@@ -93,30 +85,13 @@ document.addEventListener("DOMContentLoaded", () => {
           songItem.className = "song-item";
           songItem.dataset.id = cancion.id;
 
-          const rawCoverPath =
-            cancion.imgSencillo ||
-            cancion.portada ||
-            cancion.imgPortada ||
-            cancion.coverPath ||
-            "";
-
-          // URL por defecto si no hay imagen
+          const raw = cancion.imgSencillo || cancion.portada || cancion.imgPortada || cancion.coverPath || "";
           let coverUrl = "https://via.placeholder.com/50";
 
-          if (rawCoverPath) {
-            if (
-              rawCoverPath.startsWith("http://") ||
-              rawCoverPath.startsWith("https://")
-            ) {
-              // La API ya devuelve una URL completa
-              coverUrl = rawCoverPath;
-            } else if (rawCoverPath.startsWith("/")) {
-              // La API devuelve una ruta absoluta (ej: /files/uploads/img/...)
-              coverUrl = `${API_BASE}${rawCoverPath}`;
-            } else {
-              // Ruta relativa (ej: files/uploads/img/...)
-              coverUrl = `${API_BASE}/${rawCoverPath}`;
-            }
+          if (raw) {
+            if (raw.startsWith("http")) coverUrl = raw;
+            else if (raw.startsWith("/")) coverUrl = `${API_BASE}${raw}`;
+            else coverUrl = `${API_BASE}/${raw}`;
           }
 
           const precio =
@@ -125,7 +100,7 @@ document.addEventListener("DOMContentLoaded", () => {
               : cancion.precio || "0.00";
 
           songItem.innerHTML = `
-            <img src="${coverUrl}" alt="Portada de ${cancion.nomCancion || ""}" class="song-item-cover">
+            <img src="${coverUrl}" class="song-item-cover">
             <div class="song-item-info">
               <strong>${cancion.nomCancion || "(sin título)"}</strong>
               <small class="text-muted">ID: ${cancion.id} - ${precio} €</small>
@@ -139,37 +114,27 @@ document.addEventListener("DOMContentLoaded", () => {
           cancionesContainer.appendChild(songItem);
         });
       })
-      .catch((error) => {
-        console.error("Error al cargar canciones:", error);
+      .catch((err) => {
+        console.error(err);
         cancionesContainer.innerHTML =
           '<div class="alert alert-danger">Error al cargar las canciones.</div>';
       });
   }
 
-  if (cancionesContainer) {
-    cargarCanciones();
-  }
+  cargarCanciones();
 
   // -------------------------------------------------------------
-  // 2) Cargar géneros y mostrarlos como “chips” (igual que en canción)
+  // 2) Cargar géneros
   // -------------------------------------------------------------
   const urlGeneros = `${API_BASE}/api/generos`;
 
   async function cargarGeneros() {
-    if (!genreGrid) return;
-
     try {
       const res = await fetch(urlGeneros);
-      if (!res.ok) throw new Error(`Error al cargar géneros: ${res.status}`);
+      if (!res.ok) throw new Error("Error al cargar géneros");
       const generos = await res.json();
 
       genreGrid.innerHTML = "";
-
-      if (!generos || generos.length === 0) {
-        genreGrid.innerHTML =
-          '<span class="text-muted">(géneros no disponibles)</span>';
-        return;
-      }
 
       generos.forEach((g) => {
         const id = `genre-${g.toLowerCase().replace(/\s+/g, "-")}`;
@@ -179,7 +144,6 @@ document.addEventListener("DOMContentLoaded", () => {
         input.className = "btn-check";
         input.id = id;
         input.value = g;
-        input.autocomplete = "off";
 
         const label = document.createElement("label");
         label.className = "btn btn-outline-primary btn-sm m-1";
@@ -189,23 +153,20 @@ document.addEventListener("DOMContentLoaded", () => {
         genreGrid.appendChild(input);
         genreGrid.appendChild(label);
       });
-    } catch (error) {
-      console.error("Error al cargar géneros:", error);
-      genreGrid.innerHTML =
-        '<span class="text-muted">(géneros no disponibles)</span>';
+    } catch (e) {
+      console.error(e);
+      genreGrid.innerHTML = '<span class="text-muted">(géneros no disponibles)</span>';
     }
   }
 
-  if (genreGrid) {
-    cargarGeneros();
-  }
+  cargarGeneros();
 
   // -------------------------------------------------------------
-  // 3) Previsualización de la portada del álbum
+  // 3) Previsualización portada
   // -------------------------------------------------------------
   if (imgPortadaInput && previewImg) {
     imgPortadaInput.addEventListener("change", () => {
-      const file = imgPortadaInput.files && imgPortadaInput.files[0];
+      const file = imgPortadaInput.files?.[0];
       if (file) {
         const reader = new FileReader();
         reader.onload = (ev) => {
@@ -221,132 +182,99 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   // -------------------------------------------------------------
-  // 4) Envío y validación del formulario
+  // 4) Envío del formulario
   // -------------------------------------------------------------
   form.addEventListener("submit", (event) => {
     event.preventDefault();
     event.stopPropagation();
 
-    console.log(">>> submit álbum");
-
-
     form.classList.add("was-validated");
+    if (!form.checkValidity()) return;
 
-    if (!form.checkValidity()) {
-      console.log(">>> form.checkValidity() = false");
+    // Validar géneros
+    const selectedGenres = Array.from(
+      genreGrid.querySelectorAll('input[type="checkbox"]:checked')
+    ).map((el) => el.value);
+
+    if (!selectedGenres.length) {
+      genreInvalid.style.display = "block";
       return;
     }
+    genreInvalid.style.display = "none";
 
-    // --- Validación extra: al menos un género seleccionado ---
-    const selectedGenres = genreGrid
-      ? Array.from(
-          genreGrid.querySelectorAll('input[type="checkbox"]:checked'),
-        ).map((el) => el.value)
-      : [];
-    console.log(">>> selectedGenres:", selectedGenres);
-
-
-    if (selectedGenres.length === 0) {
-      console.log(">>> sin géneros, corto aquí");
-
-      if (genreInvalid) genreInvalid.style.display = "block";
-      return;
-    } else if (genreInvalid) {
-      genreInvalid.style.display = "none";
-    }
-
-    // --- Validación extra: al menos una canción seleccionada ---
+    // Validar canciones
     const selectedSongs = document.querySelectorAll(".song-item.selected");
-    console.log(">>> selectedSongs.length =", selectedSongs.length);
-
-    if (selectedSongs.length === 0) {
-      console.log(">>> sin canciones, corto aquí");
-      if (songsInvalid) songsInvalid.style.display = "block";
+    if (!selectedSongs.length) {
+      songsInvalid.style.display = "block";
       return;
-    } else if (songsInvalid) {
-      songsInvalid.style.display = "none";
     }
+    songsInvalid.style.display = "none";
 
-    // --- Construcción de FormData ---
+    // Construcción del FormData
     const formData = new FormData();
+    formData.append("titulo", form.querySelector("#nomAlbum").value);
+    formData.append("date", form.querySelector("#date").value);
+    formData.append("precio", form.querySelector("#precio").value);
 
-    // 1. Campos simples
-    const titulo = form.querySelector("#nomAlbum")?.value || "";
-    const fecha = form.querySelector("#date")?.value || "";
-    const precio = form.querySelector("#precio")?.value || "";
-
-    formData.append("titulo", titulo);
-    formData.append("date", fecha);
-    formData.append("precio", precio);
-
-    // 2. Imagen de portada (opcional)
-    if (imgPortadaInput && imgPortadaInput.files.length > 0) {
+    if (imgPortadaInput.files.length > 0) {
       formData.append("portada", imgPortadaInput.files[0]);
     }
 
-    // 3. Géneros
     selectedGenres.forEach((g) => formData.append("genres", g));
+    selectedSongs.forEach((s) => formData.append("canciones_ids", s.dataset.id));
 
-    // 4. IDs de canciones seleccionadas
-    selectedSongs.forEach((songItem) => {
-      formData.append("canciones_ids", songItem.dataset.id);
-    });
+    const token = localStorage.getItem("authToken");
 
-    // --- Conexión con el microservicio ---
-    const microserviceURL = `${API_BASE}/api/albumes`;
-    const token = localStorage.getItem("authToken"); // igual que en login y subida de canción
-    console.log(">>> token =", token ? "OK" : "NO HAY");
-
-
-    if (!token) {
-      alert("No hay token de sesión. Inicia sesión para poder subir álbumes.");
-      return;
-    }
-
-    console.log(">>> voy a hacer fetch /api/albumes");
-
-    fetch(microserviceURL, {
+    fetch(`${API_BASE}/api/albumes`, {
       method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
+      headers: { Authorization: `Bearer ${token}` },
       body: formData,
     })
       .then((res) => {
-        if (!res.ok) {
-          return res
-            .json()
-            .catch(() => ({ detail: `Error HTTP ${res.status}` }))
-            .then((errBody) => {
-              const msg = errBody?.detail || `Error HTTP ${res.status}`;
-              throw new Error(msg);
-            });
-        }
+        if (!res.ok)
+          return res.json().catch(() => null).then((b) => {
+            throw new Error(b?.detail || `Error HTTP ${res.status}`);
+          });
         return res.json();
       })
       .then((data) => {
-        console.log("Álbum subido con éxito:", data);
+        console.log("Álbum subido:", data);
+
+        // -------------------------------------------------------------
+        // 🔥 INICIALIZAR ESTADÍSTICAS DEL ÁLBUM (AÑADIDO DEL 2º ARCHIVO)
+        // -------------------------------------------------------------
+        if (data?.id) {
+          fetch(`${API_STATS}/estadisticas/album`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ idAlbum: data.id }),
+          })
+            .then((r) =>
+              r.ok
+                ? console.log("Estadísticas creadas correctamente.")
+                : console.warn("Error estadísticas:", r.status)
+            )
+            .catch((e) =>
+              console.error("Error conectando con estadísticas:", e)
+            );
+        }
+
         alert("✅ ¡Álbum subido correctamente!");
 
         form.reset();
         form.classList.remove("was-validated");
+        previewImg.style.display = "none";
 
-        if (previewImg) {
-          previewImg.src = "";
-          previewImg.style.display = "none";
-        }
-
-        // deseleccionar canciones
         document
           .querySelectorAll(".song-item.selected")
-          .forEach((songItem) => songItem.classList.remove("selected"));
+          .forEach((x) => x.classList.remove("selected"));
 
-        // --- NUEVA LÍNEA: REDIRECCIÓN ---
+        // Redirección original del primer archivo
         window.location.href = "/musica";
       })
-      .catch((error) => {
-        console.error("Error al subir el álbum:", error);
-        alert("❌ Error al subir el álbum: " + error.message);
+      .catch((e) => {
+        console.error(e);
+        alert("❌ Error al subir el álbum: " + e.message);
       });
   });
 });

@@ -8,394 +8,462 @@ import {
   fetchArtistAlbums,  
   fetchAllSongStats, 
   fetchAllAlbumStats,
+  fetchSongPlaysSumByIds,
+  fetchSongStatById,
+  fetchAlbumStatById,
+  forceUpdateAlbumPlays,
   fileURL
 } from "../../services/api";
-
 import '../../styles/StatsDashboard.css';
 
-// --- CONSTANTES ---
-const ROYALTY_RATE = 0; 
+// --- UTILIDADES ---
+const formatMoney = (amount) =>
+  new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR' }).format(Number(amount) || 0);
 
-// --- FUNCIONES AUXILIARES ---
-const formatMoney = (amount) => {
-  return new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR' }).format(amount);
-};
-
-const getDefaultStartDate = () => {
-    const date = new Date();
-    date.setDate(date.getDate() - 30);
-    return date.toISOString().split('T')[0];
-};
-
+// Devuelve la fecha de hoy (YYYY-MM-DD)
 const getTodayDate = () => new Date().toISOString().split('T')[0];
 
-// --- COMPONENTE PRINCIPAL ---
-const ArtistStatsPanel = ({ artistEmail }) => {
-  // --- DEBUG: Verificar si llega el prop ---
-  console.log("🎨 Dashboard montado. Email recibido:", artistEmail);
+// Devuelve la fecha de hace 30 días (YYYY-MM-DD)
+const getDefaultStartDate = () => {
+  const date = new Date();
+  date.setDate(date.getDate() - 30);
+  return date.toISOString().split('T')[0];
+};
 
-  // Estados de Datos
-  const [mergedSongData, setMergedSongData] = useState([]);
+// Normaliza el rango de fechas para llamadas al backend
+const normalizeDateRange = (start, end, allTime) => {
+  if (allTime) return { start: null, end: null, isAllTime: true };
+  if (!start || !end) return { start: null, end: null, isAllTime: true };
+
+  const s = String(start).slice(0, 10);
+  const e = String(end).slice(0, 10);
+
+  if (s > e) return { start: e, end: s, isAllTime: false };
+  return { start: s, end: e, isAllTime: false };
+};
+
+
+
+// --- COMPONENTE PRINCIPAL ---
+const ArtistStatsDashboard = ({ artistEmail }) => {
+  const [mergedSongData, setMergedSongData]   = useState([]);
   const [mergedAlbumData, setMergedAlbumData] = useState([]);
-  const [expandedAlbums, setExpandedAlbums] = useState(new Set());
-  
-  // Estados de Filtro de Fecha
+  const [expandedAlbums, setExpandedAlbums]   = useState(new Set());
+
   const [startDate, setStartDate] = useState(getDefaultStartDate());
-  const [endDate, setEndDate] = useState(getTodayDate());
+  const [endDate, setEndDate]     = useState(getTodayDate());
   const [isAllTime, setIsAllTime] = useState(false);
+
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+  const [error, setError]     = useState(null);
 
   const toggleAlbum = (albumId) => {
     setExpandedAlbums(prev => {
-      const newSet = new Set(prev);
-      newSet.has(albumId) ? newSet.delete(albumId) : newSet.add(albumId);
-      return newSet;
+      const s = new Set(prev);
+      s.has(albumId) ? s.delete(albumId) : s.add(albumId);
+      return s;
     });
   };
 
   const fetchStats = useCallback(async () => {
-    // Si no hay email, no hacemos nada (mostramos loading o error después)
-    if (!artistEmail) {
-        console.warn("⚠️ No hay artistEmail, esperando...");
-        setLoading(false);
-        return;
-    }
+    if (!artistEmail) { setLoading(false); return; }
+    setLoading(true); setError(null);
 
-    setLoading(true);
-    setError(null);
     try {
-      console.log(`🚀 Iniciando carga de datos para: ${artistEmail}`);
-      const sendStart = isAllTime ? null : startDate;
-      const sendEnd = isAllTime ? null : endDate;
-      // 1. EJECUTAR TODAS LAS LLAMADAS EN PARALELO
-    const [
-            contentSongs, 
-            contentAlbums, 
-            statsSongs, 
-            statsAlbums
-        ] = await Promise.all([
-            fetchArtistSongs(artistEmail),  // 👈 Nombre corregido
-        fetchArtistAlbums(artistEmail), // 👈 Nombre corregido
-        fetchAllSongStats(sendStart, sendEnd), 
-        fetchAllAlbumStats(sendStart, sendEnd) 
-]);
-
-      console.log("✅ Datos recibidos:", { contentSongs, statsSongs });
-
-      // 2. FUSIONAR DATOS DE CANCIONES
-      // Usamos la lista de canciones del artista (contentSongs) como base
-      const songsArray = Array.isArray(contentSongs) ? contentSongs : [];
-      
-      console.log("--- 🔍 DEBUG CRUCE DE DATOS ---");
-      console.log(`1. Canciones del Content (8080): ${songsArray.length}`);
-      if (songsArray.length > 0) {
-          console.log("   Ejemplo ID Content:", songsArray[0].id, "Tipo:", typeof songsArray[0].id);
-      }
-      
-      console.log(`2. Estadísticas de Mongo (8081): ${statsSongs.length}`);
-      if (statsSongs.length > 0) {
-          console.log("   Ejemplo ID Mongo:", statsSongs[0].idCancion, "Tipo:", typeof statsSongs[0].idCancion);
-          // Chequeamos si los IDs coinciden
-          const match = statsSongs.find(s => String(s.idCancion) === String(songsArray[0]?.id));
-          console.log("   ¿Prueba de cruce con el primero?:", match ? "✅ COINCIDE" : "❌ NO COINCIDE");
-      }
-      console.log("-----------------------------------");
-      // 👆👆👆 FIN DEL BLOQUE A PEGAR 👆👆👆
-      const songsWithStats = songsArray.map(song => {
-          // --- AQUI ES DONDE VA LA LÓGICA DE BÚSQUEDA SEGURA ---
-          const stat = statsSongs.find(s => {
-             // Convertimos todo a String para asegurar
-             const songId = String(song.id);
-             
-             // Comprobamos las 3 posibilidades de nombre que puede dar Mongo
-             if (s.idCancion && String(s.idCancion) === songId) return true;
-             if (s.id && String(s.id) === songId) return true;
-             if (s._id && String(s._id) === songId) return true;
-             
-             return false;
-          });
-          // ------------------------------------------------------
-          
-          const totalPlays = stat ? (stat.reproduccionesTotales || stat.reproducciones || 0) : 0; // Aseguramos nombres
-          const avgRating = stat ? (stat.valoracionMedia || 0) : 0;
-          
-          const filteredPlays = totalPlays; // Muestra el total real sin recorta
-
-          return {
-              ...song, 
-              reproducciones: filteredPlays,
-              valoracion: avgRating,
-              ingresosGenerados: filteredPlays * ROYALTY_RATE 
-          };
-      });
-
-      // 3. FUSIONAR DATOS DE ÁLBUMES
+      // 1) Catálogo (contenido) -> nombres/portadas/títulos
+      const [contentSongs, contentAlbums] = await Promise.all([
+        fetchArtistSongs(artistEmail),
+        fetchArtistAlbums(artistEmail),
+      ]);
+      const songsArray  = Array.isArray(contentSongs)  ? contentSongs  : [];
       const albumsArray = Array.isArray(contentAlbums) ? contentAlbums : [];
+      
+const { start, end, isAllTime: rangeAllTime } =
+  normalizeDateRange(startDate, endDate, isAllTime);
 
-      const albumsWithStats = albumsArray.map(album => {
-          const stat = statsAlbums.find(a => a.idAlbum === album.id || a.id === album.id);
-          
-          let totalPlays = stat ? (stat.reproduccionesTotales || 0) : 0;
-          let avgRating = stat ? (stat.valoracionMedia || 0) : 0;
+        // Canciones: reproducciones con rango (POST /estadisticas/canciones/reproducciones)
+        const songIds = songsArray.map(s => String(s.id));
+        const playsMap = await fetchSongPlaysSumByIds(songIds, start, end, rangeAllTime);
 
-          // Calculamos ingresos sumando las canciones procesadas anteriormente
-          const albumSongs = songsWithStats.filter(s => s.idAlbum === album.id);
-          const albumRevenue = albumSongs.reduce((acc, s) => acc + s.ingresosGenerados, 0);
-          
-          const filteredPlays = totalPlays;
+
+      const statsById = {};
+      await Promise.all(
+        songIds.map(async (id) => {
+          const stat = await fetchSongStatById(id);
+          if (stat) {
+            statsById[id] = {
+              ingresos: Number(stat?.ingresos ?? 0),
+              valoracion: Number(stat?.valoracionMedia ?? stat?.valoracion ?? 0),
+              reproduccionesFallback: Number(stat?.reproduccionesTotales ?? stat?.reproducciones ?? 0),
+            };
+          }
+        })
+      );
+
+      const songsWithStats = songsArray.map(song => {
+        const id = String(song.id);
+        const plays      = playsMap[id] ?? statsById[id]?.reproduccionesFallback ?? 0;
+        const ingresos   = statsById[id]?.ingresos ?? 0;
+        const valoracion = statsById[id]?.valoracion ?? 0;
+        return {
+          ...song,
+          reproducciones: Number(plays) || 0,
+          ingresosGenerados: Number(ingresos) || 0,
+          valoracion: Number(valoracion) || 0,
+        };
+      });
+
+      // 3) Álbumes: listado general (si tu backend lo rellena) + detalle por ID + fallback por suma de canciones
+      
+        const statsAlbumsList = await fetchAllAlbumStats(
+             rangeAllTime ? null : start,
+             rangeAllTime ? null : end
+        );
+
+
+      const albumsWithStats = await Promise.all(
+        albumsArray.map(async (album) => {
+          const albumId    = String(album.id);
+          const albumSongs = songsWithStats.filter(s => String(s.idAlbum) === albumId);
+
+          // Fallback sumando canciones (ya filtradas por fecha)
+          const fallbackPlays   = albumSongs.reduce((acc, s) => acc + (Number(s.reproducciones) || 0), 0);
+          const fallbackRevenue = albumSongs.reduce((acc, s) => acc + (Number(s.ingresosGenerados) || 0), 0);
+          const fallbackRating  = (() => {
+            const vals = albumSongs.map(s => Number(s.valoracion || 0)).filter(v => v > 0);
+            return vals.length ? (vals.reduce((a, b) => a + b, 0) / vals.length) : 0;
+          })();
+
+          const fromList = (Array.isArray(statsAlbumsList) ? statsAlbumsList : []).find(a =>
+            String(a?.idAlbum ?? a?.id ?? a?._id ?? "") === albumId
+          );
+          const fromDetail = await fetchAlbumStatById(albumId);
+
+          const reproducciones = Number(
+            (fromDetail?.reproduccionesTotales ?? fromDetail?.reproducciones ??
+             fromList?.reproduccionesTotales  ?? fromList?.reproducciones  ??
+             fallbackPlays) || 0
+          );
+
+          const ingresosGenerados = Number(
+            (fromDetail?.ingresos ?? fromList?.ingresos ?? fallbackRevenue) || 0
+          );
+
+          const valoracion = Number(
+            (fromDetail?.valoracionMedia ?? fromDetail?.valoracion ??
+             fromList?.valoracionMedia  ?? fromList?.valoracion  ??
+             fallbackRating) || 0
+          );
 
           return {
-              ...album,
-              reproducciones: filteredPlays,
-              valoracion: avgRating,
-              ingresosGenerados: albumRevenue
+            ...album,
+            reproducciones,
+            ingresosGenerados,
+            valoracion,
+            _albumSongsCount: albumSongs.length,
           };
-      });
+        })
+      );
 
       setMergedSongData(songsWithStats);
       setMergedAlbumData(albumsWithStats);
-
     } catch (err) {
-      console.error("❌ Error cargando dashboard:", err);
-      setError("Error al conectar con los servicios. Revisa que ambos backends (8080 y 8081) estén corriendo.");
+      console.error("Error cargando dashboard:", err);
+      setError("Error conectando a servicios. Revisa que contenidos (8080) y estadísticas (8081) estén corriendo.");
     } finally {
       setLoading(false);
     }
   }, [artistEmail, startDate, endDate, isAllTime]);
 
-  useEffect(() => {
-    fetchStats();
-  }, [fetchStats]);
+  useEffect(() => { fetchStats(); }, [fetchStats]);
 
-  // --- CÁLCULOS DE VISUALIZACIÓN (Memoizados) ---
-  const totalRevenue = useMemo(() => mergedSongData.reduce((acc, curr) => acc + curr.ingresosGenerados, 0), [mergedSongData]);
-  const totalPlays = useMemo(() => mergedSongData.reduce((acc, curr) => acc + curr.reproducciones, 0), [mergedSongData]);
+  // --- Resumen ---
+  const totalRevenue = useMemo(() => {
+    const songsRevenue  = mergedSongData.reduce((acc, s) => acc + (Number(s.ingresosGenerados) || 0), 0);
+    const albumsRevenue = mergedAlbumData.reduce((acc, a) => acc + (Number(a.ingresosGenerados) || 0), 0);
+    return songsRevenue + albumsRevenue;
+  }, [mergedSongData, mergedAlbumData]);
+
+  const totalPlays = useMemo(() => {
+    // Para evitar doble contaje, sumamos sólo canciones (filtradas por fecha)
+    return mergedSongData.reduce((acc, s) => acc + (Number(s.reproducciones) || 0), 0);
+  }, [mergedSongData]);
+
   const singles = mergedSongData.filter(song => !song.idAlbum);
 
   const chartData = useMemo(() => {
-      return [...mergedSongData]
-        .sort((a, b) => b.reproducciones - a.reproducciones)
-        .slice(0, 10) // Top 10 canciones
-        .map(song => ({
-            name: song.nomCancion.length > 15 ? song.nomCancion.substring(0, 15) + '...' : song.nomCancion,
-            reproducciones: song.reproducciones,
-            fullTitle: song.nomCancion
-        }));
+    const sortedSongs = [...mergedSongData]
+      .sort((a, b) => (b.reproducciones || 0) - (a.reproducciones || 0))
+      .slice(0, 10);
+    return sortedSongs.map(song => ({
+      name: song.nomCancion.length > 15 ? song.nomCancion.substring(0, 15) + '...' : song.nomCancion,
+      reproducciones: song.reproducciones || 0,
+      fullTitle: song.nomCancion
+    }));
   }, [mergedSongData]);
-
-  // --- RENDERIZADO ---
-
-  // Caso: No se pasó email
-  if (!artistEmail) return <div className="error">No se ha seleccionado ningún artista.</div>;
-
-  if (loading) return <div className="loading">Cargando estadísticas...</div>;
-  
-  if (error) return <div className="error" style={{color:'red', padding:'20px', border:'1px solid red'}}>{error}</div>;
-  
-  if (mergedSongData.length === 0 && mergedAlbumData.length === 0) {
-      return <div className="no-content">Este artista no tiene canciones ni álbumes registrados.</div>;
-  }
+  const topEarners = useMemo(() => {
+    // Hacemos una copia [...mergedSongData] para no alterar el array original
+    return [...mergedSongData]
+      .sort((a, b) => (b.ingresosGenerados || 0) - (a.ingresosGenerados || 0))
+      .slice(0, 5); // Nos quedamos con el Top 5
+  }, [mergedSongData]);
+  // --- Render ---
+  if (!artistEmail) return <div className="error">No artist selected.</div>;
+  if (loading)      return <div className="loading">Cargando estadísticas...</div>;
+  if (error)        return <div className="error" style={{color:'red', padding:'20px', border:'1px solid red'}}>{error}</div>;
+  if (mergedSongData.length === 0 && mergedAlbumData.length === 0)
+    return <div className="no-content">Este artista no tiene canciones ni álbumes registrados.</div>;
 
   return (
     <div className="artist-dashboard">
       <h2>Panel de Control: {artistEmail}</h2>
 
-      {/* === FILTRO DE FECHAS === */}
+      {/* === FILTROS === */}
       <div className="filters-container">
-        {/* 👇 NUEVO CHECKBOX: "Ver todo" */}
         <div className="date-input-group" style={{display: 'flex', alignItems: 'center', marginRight: '20px'}}>
-            <input 
-                type="checkbox" 
-                id="allTimeCheck"
-                checked={isAllTime}
-                onChange={(e) => setIsAllTime(e.target.checked)}
-                style={{width: '20px', height: '20px', cursor: 'pointer'}}
-            />
-            <label htmlFor="allTimeCheck" style={{marginLeft: '8px', cursor: 'pointer', fontWeight: 'bold'}}>
-                Ver histórico completo
-            </label>
-        </div>
-
-        {/* INPUTS DE FECHA (Ahora tienen la propiedad disabled={isAllTime}) */}
-        <div className="date-input-group">
-            <label style={{opacity: isAllTime ? 0.5 : 1}}>Fecha Inicio:</label>
-            <input 
-                type="date" 
-                value={startDate} 
-                onChange={(e) => setStartDate(e.target.value)} 
-                disabled={isAllTime} // 👈 Se bloquea si activas el histórico
-                style={{opacity: isAllTime ? 0.5 : 1, cursor: isAllTime ? 'not-allowed' : 'text'}}
-            />
+          <input
+            type="checkbox"
+            id="allTimeCheck"
+            checked={isAllTime}
+            onChange={(e) => setIsAllTime(e.target.checked)}
+            style={{width: '20px', height: '20px', cursor: 'pointer'}}
+          />
+          <label htmlFor="allTimeCheck" style={{marginLeft: '8px', cursor: 'pointer', fontWeight: 'bold'}}>
+            Ver histórico completo
+          </label>
         </div>
         <div className="date-input-group">
-            <label style={{opacity: isAllTime ? 0.5 : 1}}>Fecha Fin:</label>
-            <input 
-                type="date" 
-                value={endDate} 
-                onChange={(e) => setEndDate(e.target.value)} 
-                disabled={isAllTime} // 👈 Se bloquea si activas el histórico
-                style={{opacity: isAllTime ? 0.5 : 1, cursor: isAllTime ? 'not-allowed' : 'text'}}
-            />
+          <label style={{opacity: isAllTime ? 0.5 : 1}}>Fecha Inicio:</label>
+          <input
+            type="date"
+            value={startDate}
+            onChange={(e) => setStartDate(e.target.value)}
+            disabled={isAllTime}
+            style={{opacity: isAllTime ? 0.5 : 1, cursor: isAllTime ? 'not-allowed' : 'text'}}
+          />
         </div>
-        
-        {!isAllTime && (
-            <div style={{marginLeft: 'auto', color: '#888', fontSize: '0.9em', alignSelf: 'center'}}>
-                Periodo: <strong>{new Date(startDate).toLocaleDateString()}</strong> - <strong>{new Date(endDate).toLocaleDateString()}</strong>
-            </div>
-        )}
+        <div className="date-input-group">
+          <label style={{opacity: isAllTime ? 0.5 : 1}}>Fecha Fin:</label>
+          <input
+            type="date"
+            value={endDate}
+            onChange={(e) => setEndDate(e.target.value)}
+            disabled={isAllTime}
+            style={{opacity: isAllTime ? 0.5 : 1, cursor: isAllTime ? 'not-allowed' : 'text'}}
+          />
+        </div>
       </div>
-      
-      {/* === GRÁFICO DE BARRAS === */}
-      <div className="chart-section">
+
+      {/* === GRÁFICO === */}
+      {chartData.length > 0 && (
+        <div className="chart-section">
           <h3>Tendencia de Reproducciones (Top Canciones)</h3>
           <div style={{ width: '100%', height: 300 }}>
             <ResponsiveContainer>
-                <BarChart data={chartData}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#e0e0e0" vertical={false} />
-                    <XAxis 
-                        dataKey="name" 
-                        stroke="#666" 
-                        fontSize={12} 
-                        tickLine={false}
-                        axisLine={false}
-                    />
-                    <YAxis 
-                        stroke="#666" 
-                        fontSize={12} 
-                        tickLine={false}
-                        axisLine={false}
-                        tickFormatter={(value) => value >= 1000 ? `${(value / 1000).toFixed(1)}k` : value}
-                    />
-                    <Tooltip 
-                        cursor={{fill: 'var(--chart-cursor)'}} 
-                        contentStyle={{ 
-                            backgroundColor: '#fff', 
-                            border: '1px solid #ccc', 
-                            color: '#333',
-                            boxShadow: '0 2px 8px rgba(0,0,0,0.1)'
-                        }}
-                        formatter={(value) => [value.toLocaleString(), "Reproducciones"]}
-                    />
-                    <Bar dataKey="reproducciones" radius={[4, 4, 0, 0]}>
-                        {chartData.map((entry, index) => (
-                            <Cell 
-                                key={`cell-${index}`} 
-                                fill={index < 3 ? '#4CAF50' : '#82ca9d'} 
-                            />
-                        ))}
-                    </Bar>
-                </BarChart>
+              <BarChart data={chartData}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#e0e0e0" vertical={false} />
+                <XAxis dataKey="name" stroke="#666" fontSize={12} tickLine={false} axisLine={false} />
+                <YAxis stroke="#666" fontSize={12} tickLine={false} axisLine={false}
+                  tickFormatter={(value) => value >= 1000 ? `${(value / 1000).toFixed(1)}k` : value}
+                />
+                <Tooltip
+                  cursor={{fill: 'rgba(0,0,0,0.1)'}}
+                  contentStyle={{ backgroundColor: '#fff', border: '1px solid #ccc', color: '#333' }}
+                  formatter={(value) => [value.toLocaleString(), "Reproducciones"]}
+                  labelFormatter={(label, payload) => payload?.[0]?.payload?.fullTitle ?? label}
+                />
+                <Bar dataKey="reproducciones" radius={[4, 4, 0, 0]}>
+                  {chartData.map((entry, index) => (
+                    <Cell key={`cell-${index}`} fill={index < 3 ? '#4CAF50' : '#82ca9d'} />
+                  ))}
+                </Bar>
+              </BarChart>
             </ResponsiveContainer>
           </div>
-      </div>
+        </div>
+      )}
 
-      {/* === RESUMEN FINANCIERO === */}
+      {/* === RESUMEN === */}
       <div className="financial-summary">
         <div className="summary-card">
-            <div className="summary-title">Ingresos Estimados</div>
-            <div className="summary-value" style={{color: '#1db954'}}>
-                {formatMoney(totalRevenue)}
-            </div>
+          <div className="summary-title">Ingresos Totales (Ventas)</div>
+          <div className="summary-value" style={{color: '#1db954'}}>
+            {formatMoney(totalRevenue)}
+          </div>
         </div>
         <div className="summary-card">
-            <div className="summary-title">Reproducciones Totales</div>
-            <div className="summary-value">{totalPlays.toLocaleString()}</div>
+          <div className="summary-title">Reproducciones Totales</div>
+          <div className="summary-value">{Number(totalPlays).toLocaleString() }</div>
         </div>
         <div className="summary-card">
-            <div className="summary-title">Catálogo Activo</div>
-            <div className="summary-value">{mergedSongData.length} Canciones</div>
+          <div className="summary-title">Catálogo Activo</div>
+          <div className="summary-value">{mergedSongData.length} Canciones</div>
         </div>
       </div>
 
+      {topEarners.length > 0 && (
+        <div className="chart-section" style={{ marginBottom: '40px' }}>
+            <h3 style={{ marginTop: 0, display: 'flex', alignItems: 'center', gap: '10px' }}>
+                🏆 Top Canciones más Rentables
+                <span style={{ fontSize: '0.6em', fontWeight: 'normal', color: '#888' }}>(Ventas)</span>
+            </h3>
+            
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                {topEarners.map((song, index) => (
+                    <div key={song.id} style={{
+                        display: 'flex', 
+                        alignItems: 'center', 
+                        padding: '15px', 
+                        backgroundColor: '#f9f9f9', 
+                        borderRadius: '8px',
+                        borderLeft: index === 0 ? '5px solid #ffd700' : '5px solid #e0e0e0' // Oro para el #1
+                    }}>
+                        {/* Posición */}
+                        <div style={{ 
+                            fontSize: '1.5em', 
+                            fontWeight: 'bold', 
+                            color: index === 0 ? '#d4af37' : '#aaa', 
+                            width: '40px' 
+                        }}>
+                            #{index + 1}
+                        </div>
+
+                        {/* Portada */}
+                        <img 
+                            src={fileURL(song.imgPortada)} 
+                            alt={song.nomCancion}
+                            style={{ width: '50px', height: '50px', borderRadius: '6px', objectFit: 'cover', marginRight: '15px' }}
+                            onError={(e) => { e.target.src = 'https://via.placeholder.com/50?text=🎵' }}
+                        />
+
+                        {/* Título y Datos */}
+                        <div style={{ flexGrow: 1 }}>
+                            <div style={{ fontWeight: 'bold', fontSize: '1.1em' }}>{song.nomCancion}</div>
+                            <div style={{ fontSize: '0.85em', color: '#666' }}>
+                                {Number(song.reproducciones).toLocaleString()} reproducciones
+                            </div>
+                        </div>
+
+                        {/* Dinero Ganado */}
+                        <div style={{ textAlign: 'right' }}>
+                            <div style={{ fontSize: '1.2em', fontWeight: '800', color: '#2e7d32' }}>
+                                {formatMoney(song.ingresosGenerados)}
+                            </div>
+                            <div style={{ fontSize: '0.75em', color: '#2e7d32', backgroundColor: '#e8f5e9', padding: '2px 6px', borderRadius: '4px', display: 'inline-block' }}>
+                                Generado
+                            </div>
+                        </div>
+                    </div>
+                ))}
+            </div>
+        </div>
+      )}
+      
       {/* === ÁLBUMES === */}
       {mergedAlbumData.length > 0 && (
         <>
-            <h3>Detalle por Álbum</h3>
-            <div className="albums-list-container">
-                {mergedAlbumData.map((album) => {
-                    const albumSongs = mergedSongData.filter(song => song.idAlbum === album.id);
-                    const isExpanded = expandedAlbums.has(album.id);
-                    // Sumamos ingresos de las canciones hijas para mostrar en la cabecera
-                    const displayRevenue = albumSongs.reduce((acc, s) => acc + s.ingresosGenerados, 0);
+          <h3>Detalle por Álbum</h3>
+          <div className="albums-list-container">
+            {mergedAlbumData.map((album) => {
+              const albumSongs = mergedSongData.filter(song => String(song.idAlbum) === String(album.id));
+              const isExpanded = expandedAlbums.has(album.id);
+              const displayRevenue = Number(album.ingresosGenerados || 0);
 
-                    return (
-                    <div key={album.id} className="album-group">
-                        <div className="album-header" onClick={() => toggleAlbum(album.id)}>
-                            <span className={`chevron ${isExpanded ? 'expanded' : ''}`}>▶</span>
-                            <div className="row-title-block album-header-title">
-                                <span>{album.titulo}</span>
-                                <span style={{fontSize: '0.8em', color: '#888', fontWeight: 'normal'}}>
-                                    ID: {album.id} • Precio: {album.precio}€
-                                </span>
-                            </div>
-                            <div className="row-stats-container">
-                                <span className="stat-plays">💿 {album.reproducciones.toLocaleString()}</span>
-                                <div className="stat-revenue">
-                                    {formatMoney(displayRevenue)}
-                                </div>
-                            </div>
-                        </div>
-                        {isExpanded && (
-                            <div className="album-songs-dropdown">
-                                {albumSongs.length > 0 ? (
-                                    albumSongs.map((song, index) => (
-                                        <SongRow key={song.id} song={song} index={index} isInsideAlbum={true} />
-                                    ))
-                                ) : (
-                                    <div className="no-content-row">No hay canciones asociadas a este álbum.</div>
-                                )}
-                            </div>
-                        )}
+              return (
+                <div key={album.id} className="album-group">
+                  <div className="album-header" onClick={() => toggleAlbum(album.id)}>
+                    <span className={`chevron ${isExpanded ? 'expanded' : ''}`}>▶</span>
+                    <div className="row-title-block album-header-title">
+                      <span>{album.titulo}</span>
+                      <span style={{fontSize: '0.8em', color: '#888', fontWeight: 'normal'}}>
+                        ID: {album.id} • Precio: {album.precio}€
+                        {album._albumSongsCount > 0 && ` • ${album._albumSongsCount} pistas`}
+                      </span>
+                      
                     </div>
-                    );
-                })}
-            </div>
+                    
+                    <div className="row-stats-container">
+                      <span className="stat-plays">💿 {Number(album.reproducciones || 0).toLocaleString()}</span>
+                      <div className="stat-revenue">
+                        {formatMoney(displayRevenue)}
+                      </div>
+                      <button
+                        title="Forzar actualización de reproducciones del álbum"
+                        onClick={async (e) => {
+                          e.stopPropagation();
+                          await forceUpdateAlbumPlays(album.id);
+                          await new Promise(r => setTimeout(r, 250));
+                          await fetchStats();
+                        }}
+                        style={{
+                          marginLeft: 8, padding: '4px 8px', borderRadius: 6,
+                          border: '1px solid #ddd', background: '#fff', cursor: 'pointer'
+                        }}
+                      >
+                        ⟳
+                      </button>
+                    </div>
+                  </div>
+                  {isExpanded && (
+                    <div className="album-songs-dropdown">
+                      {albumSongs.length > 0 ? (
+                        albumSongs.map((song, index) => (
+                          <SongRow key={song.id} song={song} index={index} isInsideAlbum={true} />
+                        ))
+                      ) : (
+                        <div className="no-content-row">No hay canciones asociadas a este álbum.</div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
         </>
       )}
 
       {/* === SENCILLOS === */}
       {singles.length > 0 && (
-          <div className="singles-section">
-            <h3>Detalle por Sencillos</h3>
-            <div className="songs-list-container">
-                {singles.map((song, index) => (
-                    <SongRow key={song.id} song={song} index={index} isInsideAlbum={false} />
-                ))}
-            </div>
+        <div className="singles-section">
+          <h3>Detalle por Sencillos</h3>
+          <div className="songs-list-container">
+            {singles.map((song, index) => (
+              <SongRow key={song.id} song={song} index={index} isInsideAlbum={false} />
+            ))}
           </div>
+        </div>
       )}
     </div>
   );
 };
 
-// --- SUBCOMPONENTE: FILA DE CANCIÓN ---
+// --- FILA DE CANCIÓN ---
 const SongRow = ({ song, index, isInsideAlbum }) => (
-    <div className={`list-row song-row ${isInsideAlbum ? 'album-song-row' : ''}`}>
-        <span className="row-index">{index + 1}</span>
-        <div className="row-info-container">
-            <img 
-                src={fileURL(song.imgPortada)} 
-                alt={song.nomCancion} 
-                className="row-thumbnail"
-                onError={(e) => {e.target.src = 'https://via.placeholder.com/40/333333/888888?text=🎵'}}
-            />
-            <div className="row-title-block">
-                <span className="row-title">{song.nomCancion}</span>
-                <span style={{fontSize: '0.75em', color: '#666'}}>Venta: {song.precio}€</span>
-            </div>
-        </div>
-        <div className="row-stats-container">
-            <span className="stat-plays">{song.reproducciones.toLocaleString()} rep.</span>
-            <div className="stat-revenue">
-                {formatMoney(song.ingresosGenerados)}
-                <span className="label">est.</span>
-            </div>
-            {song.valoracion > 0 && (
-                <span className="stat-rating">⭐ {song.valoracion.toFixed(1)}</span>
-            )}
-        </div>
+  <div className={`list-row song-row ${isInsideAlbum ? 'album-song-row' : ''}`}>
+    <span className="row-index">{index + 1}</span>
+    <div className="row-info-container">
+      <img
+        src={fileURL(song.imgPortada)}
+        alt={song.nomCancion}
+        className="row-thumbnail"
+        onError={(e) => { e.target.src = 'https://via.placeholder.com/40/333333/888888?text=🎵' }}
+      />
+      <div className="row-title-block">
+        <span className="row-title">{song.nomCancion}</span>
+        <span style={{fontSize: '0.75em', color: '#666'}}>Precio: {song.precio}€</span>
+      </div>
     </div>
+    <div className="row-stats-container">
+      <span className="stat-plays">{Number(song.reproducciones || 0).toLocaleString()} rep.</span>
+      <div className="stat-revenue">
+        {formatMoney(song.ingresosGenerados || 0)}
+        <span className="label">ventas</span>
+      </div>
+      {Number(song.valoracion || 0) > 0 && (
+        <span className="stat-rating">⭐ {Number(song.valoracion).toFixed(1)}</span>
+      )}
+    </div>
+  </div>
 );
 
-export default ArtistStatsPanel;
+export default ArtistStatsDashboard;

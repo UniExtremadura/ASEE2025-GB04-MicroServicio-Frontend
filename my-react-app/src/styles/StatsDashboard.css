@@ -64,7 +64,7 @@ h3 { font-size: 1.5em; margin-top: 32px; color: #4a148c; }
 
 /* 1. Columna Índice */
 .row-index {
-  color: #888;
+  color: #000000;
   font-size: 1em;
   width: 30px;
   text-align: center;
@@ -118,7 +118,7 @@ h3 { font-size: 1.5em; margin-top: 32px; color: #4a148c; }
 }
 
 .stat-plays {
-  color: #555; 
+  color: #000000; 
   font-weight: 500;
 }
 
