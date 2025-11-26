@@ -1,0 +1,97 @@
+
+/* Contenedor principal de las estrellas */
+.star-rating-wrapper {
+  margin-top: 12px;
+  text-align: center;
+}
+
+/* El componente de estrellas en sí */
+.star-rating-container {
+  position: relative;
+  display: inline-block;
+  font-size: 24px;
+  line-height: 1;
+  cursor: default;
+}
+
+/* Capa de fondo (estrellas grises) */
+.star-layer-bg {
+  color: #e0e0e0;
+}
+
+/* Capa frontal (estrellas doradas) */
+.star-layer-fg {
+  position: absolute;
+  top: 0;
+  left: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  color: #FFD700;
+}
+
+/* Texto de la puntuación numérica */
+.rating-text {
+  margin-top: 4px;
+  font-size: 0.9rem;
+  color: #555;
+  font-weight: 500;
+}
+
+.rating-text span {
+  font-size: 0.8em;
+  color: #999;
+}
+
+/* --- Sección de Valoración del Usuario --- */
+.user-rating-section {
+  margin-top: 20px;
+  padding-top: 15px;
+  border-top: 1px solid #eee;
+  text-align: center;
+}
+
+.user-rating-title {
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: #888;
+  margin-bottom: 8px;
+}
+
+/* Contenedor de estrellas interactivas */
+.interactive-stars {
+  display: inline-flex;
+  gap: 5px;
+  cursor: pointer;
+}
+
+/* Estrella individual interactiva */
+.star-btn {
+  background: none;
+  border: none;
+  font-size: 28px; /* Un poco más grandes para facilitar el clic */
+  padding: 0;
+  line-height: 1;
+  transition: transform 0.1s;
+  cursor: pointer;
+}
+
+.star-btn:hover {
+  transform: scale(1.2);
+}
+
+/* Colores de estado */
+.star-filled {
+  color: #FFD700; /* Dorado */
+}
+
+.star-empty {
+  color: #e0e0e0; /* Gris */
+}
+
+.rating-msg {
+  font-size: 0.8rem;
+  margin-top: 5px;
+  height: 20px; /* Para evitar saltos si el texto aparece/desaparece */
+  color: #4CAF50; /* Verde éxito */
+}

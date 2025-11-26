@@ -1,5 +1,6 @@
-// PublicAlbumDetail fusionado con estadísticas
 import React, { useEffect, useState } from "react";
+// API PRINCIPAL
+import { jsPDF } from "jspdf"; 
 import {
   fetchAlbumById,
   fetchAlbumTracks,
@@ -7,13 +8,61 @@ import {
   registerSongPlay,
   purchaseAlbum,
   getStoredUserEmail,
-} from "../../services/musicApi"; // O ajusta según tu estructura
-import { postAlbumPurchase, postSongReproduction } from "../../services/api";
+} from "../../services/musicApi"; 
 
+// IMPORTAMOS LAS FUNCIONES DE VALORACIÓN DESDE TU API
+import { 
+  postAlbumPurchase, 
+  postSongReproduction,
+  fetchAlbumRatingAvg, 
+  fetchUserRating,     
+  postRating,         
+  updateRating         
+} from "../../services/api";
+
+import AddToPlaylistModal from "./AddToPlaylistModal";
 import ShareModal from "../ShareModal";
 import { fileURL, formatDate } from "../../utils/helpers";
 import "../../styles/MusicGlobal.css";
+import "../../styles/valoraciones.css"; // Estilos de las estrellas
 
+// ------------------ SUB-COMPONENTES AUXILIARES (ESTRELLAS) ------------------
+const StarRating = ({ value }) => {
+  const rating = Math.max(0, Math.min(5, Number(value) || 0));
+  const percentage = (rating / 5) * 100;
+  return (
+    <div className="star-rating-container" title={`Valoración: ${rating.toFixed(1)}`}>
+      <div className="star-layer-bg">★★★★★</div>
+      <div className="star-layer-fg" style={{ width: `${percentage}%` }}>
+        ★★★★★
+      </div>
+    </div>
+  );
+};
+
+const InteractiveRating = ({ currentRating, onRate }) => {
+  const [hoverValue, setHoverValue] = useState(0);
+  return (
+    <div className="interactive-stars" onMouseLeave={() => setHoverValue(0)}>
+      {[1, 2, 3, 4, 5].map((star) => {
+        const isActive = star <= (hoverValue || currentRating);
+        return (
+          <button
+            key={star}
+            type="button"
+            className={`star-btn ${isActive ? "star-filled" : "star-empty"}`}
+            onClick={() => onRate(star)}
+            onMouseEnter={() => setHoverValue(star)}
+          >
+            ★
+          </button>
+        );
+      })}
+    </div>
+  );
+};
+
+// ------------------ COMPONENTE PRINCIPAL ------------------
 const PublicAlbumDetail = ({ albumId, onBack, onOpenSong }) => {
   const [album, setAlbum] = useState(null);
   const [tracks, setTracks] = useState([]);
@@ -32,7 +81,13 @@ const PublicAlbumDetail = ({ albumId, onBack, onOpenSong }) => {
   // Estado del modal de compartir
   const [showShareModal, setShowShareModal] = useState(false);
 
-  // 1) Cargar álbum + canciones + nombres de artista
+  // --- NUEVOS ESTADOS PARA VALORACIÓN ---
+  const [avgRating, setAvgRating] = useState(0);
+  const [myRating, setMyRating] = useState(0);
+  const [hasRated, setHasRated] = useState(false);
+  const [ratingMessage, setRatingMessage] = useState("");
+
+  // 1) Cargar álbum + canciones + nombres de artista + VALORACIONES
   useEffect(() => {
     if (albumId == null) return;
 
@@ -40,14 +95,18 @@ const PublicAlbumDetail = ({ albumId, onBack, onOpenSong }) => {
       try {
         setLoading(true);
         setError("");
+        // Reset valoraciones
+        setMyRating(0);
+        setHasRated(false);
 
+        // A. Cargar Datos Básicos
         const [albumData, tracksData] = await Promise.all([
           fetchAlbumById(albumId),
           fetchAlbumTracks(albumId),
         ]);
 
+        // B. Procesar Artistas
         let albumWithArtists = albumData;
-
         try {
           const emails = Array.isArray(albumData.artistas_emails)
             ? albumData.artistas_emails
@@ -82,6 +141,28 @@ const PublicAlbumDetail = ({ albumId, onBack, onOpenSong }) => {
         setAlbum(albumWithArtists);
         setTracks(tracksData || []);
         setPayAmount(albumData?.precio ?? "");
+
+        // C. Cargar Media de Valoración (Álbum)
+        try {
+            const media = await fetchAlbumRatingAvg(albumId);
+            setAvgRating(Number(media) || 0);
+        } catch (e) {
+            console.warn("No se pudo cargar la media del álbum", e);
+        }
+
+        // D. Cargar Valoración del Usuario (Álbum)
+        const email = getStoredUserEmail();
+        if (email) {
+            try {
+                // Pasamos songId=null, albumId=albumId
+                const existingVote = await fetchUserRating(email, null, albumId);
+                if (existingVote) {
+                    setMyRating(existingVote.valoracion);
+                    setHasRated(true);
+                }
+            } catch (e) { /* Error silencioso si no ha votado */ }
+        }
+
       } catch (err) {
         console.error("Error cargando álbum:", err);
         setError("No se han podido cargar los datos del álbum.");
@@ -134,6 +215,57 @@ const PublicAlbumDetail = ({ albumId, onBack, onOpenSong }) => {
       }
     } catch (err) {
       console.error("Error registrando reproducción:", err);
+    }
+  };
+
+  // ---------------------------
+  // MANEJO DE LA VALORACIÓN (LÓGICA ÁLBUM)
+  // ---------------------------
+  const handleUserRate = async (stars) => {
+    const email = getStoredUserEmail();
+    if (!email) {
+      alert("Debes iniciar sesión para valorar.");
+      return;
+    }
+
+    setMyRating(stars);
+    setRatingMessage("Guardando...");
+
+    try {
+      if (hasRated) {
+        // Actualizar (PUT) - idSong=null, idAlbum=album.id
+        await updateRating(email, null, album.id, stars);
+        setRatingMessage("Valoración actualizada");
+      } else {
+        // Crear (POST)
+        await postRating(email, null, album.id, stars);
+        setHasRated(true);
+        setRatingMessage("¡Valoración guardada!");
+      }
+
+      // Recargar media
+      const nuevaMedia = await fetchAlbumRatingAvg(album.id);
+      setAvgRating(Number(nuevaMedia) || 0);
+      setTimeout(() => setRatingMessage(""), 2000);
+
+    } catch (error) {
+      // Auto-reparación 404 (Si falla PUT, intenta POST)
+      if (hasRated && error.response && error.response.status === 404) {
+        console.warn("Sincronización corregida: Cambiando a POST.");
+        try {
+            await postRating(email, null, album.id, stars);
+            setHasRated(true);
+            setRatingMessage("¡Valoración guardada!");
+            
+            const nuevaMedia = await fetchAlbumRatingAvg(album.id);
+            setAvgRating(Number(nuevaMedia) || 0);
+            setTimeout(() => setRatingMessage(""), 2000);
+        } catch (postError) {
+            setRatingMessage("Error al guardar.");
+        }
+      } else {
+        setRatingMessage("Error al conectar.");
+      }
     }
   };
 
@@ -201,10 +333,7 @@ const PublicAlbumDetail = ({ albumId, onBack, onOpenSong }) => {
 
         await postAlbumPurchase(album.id, precioFinal);
       } catch (statsErr) {
-        console.warn(
-          "La compra funcionó, pero falló el envío de estadísticas:",
-          statsErr
-        );
+        console.warn("Fallo estadística compra:", statsErr);
       }
 
       setPurchaseOk(
@@ -369,6 +498,34 @@ const PublicAlbumDetail = ({ albumId, onBack, onOpenSong }) => {
         {/* PORTADA */}
         <div className="album-cover-side">
           <img src={cover} alt={album.titulo} />
+
+          {/* ======================================= */}
+          {/* SECCIÓN DE VALORACIÓN (AÑADIDA AQUÍ) */}
+          {/* ======================================= */}
+          
+          {/* 1. Media Visual */}
+          <div className="star-rating-wrapper" style={{ marginTop: "15px" }}>
+             <StarRating value={avgRating} />
+             <div className="rating-text">
+                Media: {avgRating.toFixed(1)} <span>/ 5</span>
+             </div>
+          </div>
+
+          {/* 2. Valoración Interactiva */}
+          <div className="user-rating-section">
+             <div className="user-rating-title">
+                 {hasRated ? "Tu valoración" : "Valora este álbum"}
+             </div>
+             
+             <InteractiveRating 
+                 currentRating={myRating} 
+                 onRate={handleUserRate} 
+             />
+             
+             <div className="rating-msg">{ratingMessage}</div>
+          </div>
+          {/* ======================================= */}
+
         </div>
       </div>
 

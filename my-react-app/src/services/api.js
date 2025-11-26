@@ -1,3 +1,5 @@
+import axios from "axios";
+
 const API_BASE_URL = 'http://127.0.0.1:8001';
 const COMPRAS_API_URL = 'http://127.0.0.1:8080/api';
 const STATS_BASE_URL = "http://localhost:8081";
@@ -527,4 +529,94 @@ export const fileURL = (relativePath) => {
   const cleanPath = relativePath.startsWith("/") ? relativePath : `/${relativePath}`;
   
   return `${rootUrl}${cleanPath}`;
+};
+
+
+/*****************************************
+ * FUNCIONES DE VALORACIONES DE CANCIONES
+ *****************************************/
+
+const RATING_URL = "http://localhost:8081/api"; 
+
+// 1. Obtener media de CANCIÓN
+export const fetchSongRatingAvg = async (songId) => {
+  try {
+    const response = await axios.get(`${RATING_URL}/canciones/${songId}/valoracion-media`);
+    return response.data?.valoracionMedia ?? 0;
+  } catch (error) {
+    return 0;
+  }
+};
+
+// 2. Obtener media de ÁLBUM (¡ESTA ES LA QUE TE FALTABA!)
+export const fetchAlbumRatingAvg = async (albumId) => {
+  try {
+    const response = await axios.get(`${RATING_URL}/albumes/${albumId}/valoracion-media`);
+    return response.data?.valoracionMedia ?? 0;
+  } catch (error) {
+    return 0;
+  }
+};
+
+// 3. Consultar voto anterior (Flexible: Canción o Álbum)
+export const fetchUserRating = async (userEmail, songId = null, albumId = null) => {
+  try {
+    const params = { emailUser: userEmail };
+    if (songId) params.idSong = songId;
+    if (albumId) params.idAlbum = albumId;
+
+    const response = await axios.get(`${RATING_URL}/valoraciones`, { params });
+    
+    if (Array.isArray(response.data) && response.data.length > 0) {
+      return response.data[0]; 
+    }
+    return null; 
+  } catch (error) { return null; }
+};
+
+// 4. Enviar voto (POST) - (Flexible: Canción o Álbum)
+export const postRating = async (userEmail, songId, albumId, rating) => {
+  // NOTA: Si vienes de PublicSongDetail antiguo, puede que estés enviando (email, songId, rating).
+  // Vamos a detectar eso para que no se rompa:
+  let finalRating = rating;
+  let finalAlbumId = albumId;
+
+  // Si 'rating' es undefined, significa que nos llamaron con 3 argumentos: (email, songId, rating)
+  // así que el tercer argumento (albumId) es en realidad el rating.
+  if (rating === undefined) {
+      finalRating = albumId; // El 3er argumento es la nota
+      finalAlbumId = null;   // No hay álbum
+  }
+
+  const payload = {
+    emailUser: userEmail,
+    valoracion: finalRating
+  };
+  if (songId) payload.idSong = songId;
+  if (finalAlbumId) payload.idAlbum = finalAlbumId;
+
+  const response = await axios.post(`${RATING_URL}/valoraciones`, payload);
+  return response.data;
+};
+
+// 5. Actualizar voto (PUT) - (Flexible)
+export const updateRating = async (userEmail, songId, albumId, rating) => {
+  // Misma lógica de compatibilidad que en POST
+  let finalRating = rating;
+  let finalAlbumId = albumId;
+
+  if (rating === undefined) {
+      finalRating = albumId;
+      finalAlbumId = null;
+  }
+
+  const payload = {
+    emailUser: userEmail,
+    valoracion: finalRating
+  };
+  if (songId) payload.idSong = songId;
+  if (finalAlbumId) payload.idAlbum = finalAlbumId;
+
+  const response = await axios.put(`${RATING_URL}/valoraciones`, payload);
+  return response.data;
 };
