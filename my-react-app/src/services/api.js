@@ -620,3 +620,18 @@ export const updateRating = async (userEmail, songId, albumId, rating) => {
   const response = await axios.put(`${RATING_URL}/valoraciones`, payload);
   return response.data;
 };
+
+
+export const fetchUserPlayStats = async (email) => {
+  try {
+    // Endpoint exacto de tu Java:
+    // GET /estadisticas/usuario/{email}/reproducciones/resumen
+    const response = await axios.get(`${STATS_BASE_URL}/estadisticas/usuario/${encodeURIComponent(email)}/reproducciones/resumen`);
+    
+    // Devuelve objeto: { "1": 10, "5": 2 }
+    return response.data; 
+  } catch (error) {
+    console.warn("No se pudieron cargar estadísticas de usuario", error);
+    return {};
+  }
+};

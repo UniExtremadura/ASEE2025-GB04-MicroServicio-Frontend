@@ -7,8 +7,11 @@ import {
   fetchAlbumById,
   fetchUserByEmail,
   fetchArtistByEmail,
+  fetchArtistsByEmails,
   deleteUser,   
-  deleteArtist  
+  deleteArtist,
+  fetchUserPlayStats,    
+  fileURL
 } from '../services/api';
 import ShareModal from './ShareModal'; 
 import '../styles/ProfilePage.css';
@@ -35,6 +38,9 @@ export default function ProfilePage() {
   const [purchasesLoading, setPurchasesLoading] = useState(true);
   const [isOwner, setIsOwner] = useState(false);
   
+  const [topSongs, setTopSongs] = useState([]); 
+  const [statsLoading, setStatsLoading] = useState(false);
+
   const [editForm, setEditForm] = useState({
     display_name: '',
     password: '',
@@ -130,6 +136,83 @@ export default function ProfilePage() {
       loadAllPurchases();
     }
   }, [email]);
+
+  useEffect(() => {
+    if (email && activeTab === 'stats') {
+      const loadStats = async () => {
+        setStatsLoading(true);
+        try {
+          // A. Obtener Stats y Ordenar
+          const statsMap = await fetchUserPlayStats(email);
+          const sortedStats = statsMap ? Object.entries(statsMap)
+            .map(([songId, count]) => ({ id: songId, plays: count }))
+            .sort((a, b) => b.plays - a.plays) : [];
+
+          // B. Obtener detalles Canción + Título Álbum
+          const songsWithDetails = await Promise.all(
+            sortedStats.map(async (item) => {
+              try {
+                const song = await fetchSongById(item.id);
+                
+                // Aseguramos el nombre del álbum
+                let albumTitle = "Sencillo";
+                if (song.idAlbum) {
+                    try {
+                        const albumData = await fetchAlbumById(song.idAlbum);
+                        if(albumData && albumData.titulo) albumTitle = albumData.titulo;
+                    } catch (e) { /* ignore */ }
+                }
+
+                // Devolvemos todo mezclado
+                return { 
+                    ...song, 
+                    plays: item.plays, 
+                    albumName: albumTitle,
+                    // Preparamos un nombre de visualización seguro por si acaso
+                    safeTitle: song.nomCancion || song.titulo || "Canción sin nombre"
+                };
+              } catch (e) { return null; }
+            })
+          );
+          
+          const validSongs = songsWithDetails.filter(s => s);
+
+          // C. Resolver Nombres de Artistas
+          const allEmails = validSongs.reduce((acc, song) => {
+             if (Array.isArray(song.artistas_emails)) return [...acc, ...song.artistas_emails];
+             // Soporte por si viene como string suelto
+             if (typeof song.artistas_emails === 'string') return [...acc, song.artistas_emails]; 
+             return acc;
+          }, []);
+          
+          // Fetch masivo de artistas
+          const artistsMap = await fetchArtistsByEmails(allEmails);
+
+          // D. Construir objeto final para la vista
+          const finalSongs = validSongs.map(song => {
+             const emailArtista = Array.isArray(song.artistas_emails) ? song.artistas_emails[0] : null;
+             const datosArtista = artistsMap[emailArtista];
+             
+             const artistName = datosArtista?.display_name 
+                || datosArtista?.nombre_artistico 
+                || emailArtista 
+                || "Artista Desconocido";
+
+             return { ...song, artistName };
+          });
+          
+          setTopSongs(finalSongs);
+
+        } catch (err) {
+          console.error("Error stats:", err);
+        } finally {
+          setStatsLoading(false);
+        }
+      };
+      loadStats();
+    }
+  }, [email, activeTab]);
+
 
   // Handlers Edición
   const handleOpenEdit = () => {
@@ -267,6 +350,12 @@ export default function ProfilePage() {
             >
               Álbumes ({purchasedAlbums.length})
             </button>
+            <button 
+              className={`tab-btn ${activeTab === 'stats' ? 'active' : ''}`}
+              onClick={() => setActiveTab('stats')}
+            >
+              📊 Mis Estadísticas
+            </button>
           </div>
         </div>
       </div>
@@ -336,7 +425,200 @@ export default function ProfilePage() {
                 <div className="empty-msg">No tienes álbumes comprados.</div>
               )
             )}
-          </>
+            
+           {activeTab === 'stats' && (
+              <div className="stats-container" style={{ width: '100%', paddingBottom: '50px' }}>
+                
+                {statsLoading ? ( 
+                  <div className="loading" style={{padding: '60px', textAlign: 'center', color: '#666'}}>
+                    Cargando tu ranking musical...
+                  </div>
+                ) : topSongs.length > 0 ? (
+                  <div className="top-songs-list" style={{ marginTop: '20px' }}>
+                    <h3 style={{ marginBottom: '25px', color: '#111827', fontSize: '1.5rem', paddingLeft: '10px', whiteSpace: 'nowrap' }}>
+                      📊 Tu Top Más Escuchado
+                    </h3>
+                    
+                    {/* ENCABEZADO CON GRID RESPONSIVO */}
+                    <div style={{ 
+                      display: 'grid', 
+                      gridTemplateColumns: 'minmax(40px, 60px) minmax(60px, 80px) minmax(200px, 1fr) minmax(150px, 0.8fr) minmax(140px, 200px)', 
+                      gap: '20px',
+                      padding: '0 20px 15px 20px',
+                      borderBottom: '1px solid #e5e7eb',
+                      color: '#9ca3af',
+                      fontSize: '0.8rem',
+                      fontWeight: 'bold',
+                      textTransform: 'uppercase',
+                      letterSpacing: '1px',
+                      alignItems: 'center'
+                    }}>
+                      <div style={{ textAlign: 'center' }}>#</div>
+                      <div></div>
+                      <div>Título</div>
+                      <div>Álbum</div>
+                      <div style={{ textAlign: 'right' }}>Reproducciones</div>
+                    </div>
+
+                    {/* FILAS DE DATOS */}
+                    {(() => {
+                      const maxPlays = Math.max(...topSongs.map(s => s.plays)) || 1;
+
+                      return topSongs.map((song, index) => {
+                        const percentage = (song.plays / maxPlays) * 100;
+                        
+                        let rankColor = '#6b7280'; 
+                        let rankWeight = '500';
+                        let rankSize = '1rem';
+                        let rowBg = 'transparent';
+                        
+                        if (index === 0) { 
+                            rankColor = '#d97706';
+                            rankWeight = '900'; 
+                            rankSize = '1.4rem';
+                            rowBg = '#fffbeb';
+                        } 
+                        else if (index === 1) { 
+                            rankColor = '#94a3b8'; 
+                            rankWeight = '800'; 
+                            rankSize = '1.2rem'; 
+                        }
+                        else if (index === 2) { 
+                            rankColor = '#b45309'; 
+                            rankWeight = '700'; 
+                            rankSize = '1.1rem'; 
+                        }
+
+                        return (
+                          <div 
+                            key={song.id || index} 
+                            onClick={() => navigate(`/musica?songId=${song.id}`)}
+                            style={{
+                              display: 'grid',
+                              gridTemplateColumns: 'minmax(40px, 60px) minmax(60px, 80px) minmax(200px, 1fr) minmax(150px, 0.8fr) minmax(140px, 200px)',
+                              gap: '20px',
+                              alignItems: 'center',
+                              padding: '15px 20px',
+                              borderRadius: '8px',
+                              cursor: 'pointer',
+                              backgroundColor: rowBg,
+                              borderBottom: '1px solid #f3f4f6',
+                              transition: 'all 0.2s ease'
+                            }}
+                            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f9fafb'}
+                            onMouseLeave={(e) => e.currentTarget.style.backgroundColor = rowBg}
+                          >
+                            
+                            {/* COL 1: RANKING */}
+                            <div style={{ 
+                              textAlign: 'center', 
+                              color: rankColor, 
+                              fontWeight: rankWeight, 
+                              fontSize: rankSize
+                            }}>
+                              {index + 1}
+                            </div>
+
+                            {/* COL 2: FOTO */}
+                            <img 
+                              src={fileURL(song.imgPortada || song.portada) || 'https://via.placeholder.com/60'} 
+                              alt={song.safeTitle}
+                              style={{ 
+                                width: '60px', height: '60px', 
+                                borderRadius: '6px', objectFit: 'cover',
+                                boxShadow: '0 2px 5px rgba(0,0,0,0.1)',
+                                backgroundColor: '#eee'
+                              }}
+                            />
+
+                            {/* COL 3: TÍTULO Y ARTISTA */}
+                            <div style={{ 
+                              display: 'flex', 
+                              flexDirection: 'column', 
+                              justifyContent: 'center', 
+                              minWidth: 0 
+                            }}>
+                              <div style={{ 
+                                fontWeight: '700', 
+                                color: '#111827', 
+                                fontSize: '1.05rem',
+                                whiteSpace: 'nowrap', 
+                                overflow: 'hidden', 
+                                textOverflow: 'ellipsis',
+                                marginBottom: '4px'
+                              }}>
+                                {song.safeTitle}
+                              </div>
+                              <div style={{ 
+                                fontSize: '0.9rem', 
+                                color: '#6b7280',
+                                whiteSpace: 'nowrap', 
+                                overflow: 'hidden', 
+                                textOverflow: 'ellipsis'
+                              }}>
+                                {song.artistName}
+                              </div>
+                            </div>
+
+                            {/* COL 4: ÁLBUM */}
+                            <div style={{ 
+                              color: '#4b5563', 
+                              fontSize: '0.95rem',
+                              whiteSpace: 'nowrap', 
+                              overflow: 'hidden', 
+                              textOverflow: 'ellipsis'
+                            }}>
+                              {song.albumName}
+                            </div>
+
+                            {/* COL 5: REPRODUCCIONES Y BARRA */}
+                            <div style={{ 
+                              display: 'flex', 
+                              flexDirection: 'column', 
+                              alignItems: 'flex-end' 
+                            }}>
+                              <span style={{ 
+                                fontWeight: '800', 
+                                color: '#1f2937', 
+                                fontSize: '1.1rem' 
+                              }}>
+                                {song.plays}
+                              </span>
+                              
+                              <div style={{ 
+                                width: '100%', 
+                                maxWidth: '160px',
+                                height: '6px', 
+                                background: '#e5e7eb', 
+                                marginTop: '6px', 
+                                borderRadius: '3px', 
+                                overflow: 'hidden' 
+                              }}>
+                                <div style={{ 
+                                  width: `${percentage}%`, 
+                                  height: '100%', 
+                                  background: index === 0 ? '#f59e0b' : '#3b82f6',
+                                  borderRadius: '3px',
+                                  transition: 'width 0.5s ease'
+                                }}></div>
+                              </div>
+                            </div>
+
+                          </div>
+                        );
+                      });
+                    })()}
+                  </div>
+                ) : (
+                  <div className="empty-msg" style={{ textAlign: 'center', padding: '80px 20px', color: '#9ca3af' }}>
+                    <div style={{ fontSize: '4rem', marginBottom: '10px', opacity: 0.5 }}>📊</div>
+                    <p style={{fontSize:'1.2rem', fontWeight: '500'}}>Aún no hay datos de reproducción.</p>
+                    <p style={{fontSize:'0.95rem'}}>¡Empieza a escuchar música para generar tu ranking personal!</p>
+                  </div>
+                )}
+              </div>
+            )}
+          </> 
         )}
       </main>
 
