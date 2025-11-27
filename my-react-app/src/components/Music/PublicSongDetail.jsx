@@ -1,18 +1,18 @@
 import React, { useEffect, useState } from "react";
 import { jsPDF } from "jspdf";
 
-// API 
+// API
 import {
   fetchAlbumById,
-  fetchAlbumTracks,
   fetchArtistsByEmails,
   registerSongPlay,
-  purchaseAlbum,
+  fetchSongById, // De develop
+  purchaseSong,
   getStoredUserEmail,
-   fetchSongById, 
-    purchaseSong,   
-} from "../../services/musicApi"; 
+  checkSongPurchase, // De tu rama (HEAD)
+} from "../../services/musicApi";
 
+// API VALORACIONES Y ESTADÍSTICAS (De develop)
 import {
   postSongReproduction,
   postSongPurchase,
@@ -25,11 +25,10 @@ import {
 // CSS
 import "../../styles/valoraciones.css";
 
-// PLAYLIST
+// COMPONENTES
 import AddToPlaylistModal from "./AddToPlaylistModal";
-
-// SHARE
-import ShareModal from "../ShareModal";
+import CommentsSection from "./CommentsSection"; // De tu rama
+import ShareModal from "../ShareModal"; // De develop
 
 import { fileURL } from "../../utils/helpers";
 
@@ -66,7 +65,10 @@ const StarRating = ({ value }) => {
   const percentage = (rating / 5) * 100;
 
   return (
-    <div className="star-rating-container" title={`Valoración: ${rating.toFixed(1)}`}>
+    <div
+      className="star-rating-container"
+      title={`Valoración: ${rating.toFixed(1)}`}
+    >
       <div className="star-layer-bg">★★★★★</div>
       <div className="star-layer-fg" style={{ width: `${percentage}%` }}>
         ★★★★★
@@ -107,18 +109,21 @@ const PublicSongDetail = ({ songId, onBack }) => {
   const [album, setAlbum] = useState(null);
   const [artistName, setArtistName] = useState("");
 
-  // Compra
+  // Estados de compra
   const [showPurchase, setShowPurchase] = useState(false);
   const [payAmount, setPayAmount] = useState("");
   const [purchaseLoading, setPurchaseLoading] = useState(false);
   const [purchaseError, setPurchaseError] = useState("");
   const [purchaseOk, setPurchaseOk] = useState("");
 
+  // Estado VERIFICACIÓN COMPRA (Tu rama)
+  const [isPurchased, setIsPurchased] = useState(false);
+
   // Playlist + Share
   const [showAddToPlaylist, setShowAddToPlaylist] = useState(false);
   const [showShareModal, setShowShareModal] = useState(false);
 
-  // Rating
+  // Rating (Develop)
   const [avgRating, setAvgRating] = useState(0);
   const [myRating, setMyRating] = useState(0);
   const [hasRated, setHasRated] = useState(false);
@@ -132,23 +137,36 @@ const PublicSongDetail = ({ songId, onBack }) => {
       try {
         setLoading(true);
         setErr("");
+        setIsPurchased(false);
 
+        // 1. Cargar Canción
         const data = await fetchSongById(songId);
         setSong(data);
         setPlays(data.numVisualizaciones || 0);
         setPayAmount(data.precio ?? "");
 
-        // Media valoración
+        const userEmail = getStoredUserEmail();
+        const token = localStorage.getItem("authToken");
+
+        // 2. Verificar si ya está comprada (Tu rama)
+        if (token && userEmail) {
+          try {
+            const bought = await checkSongPurchase(userEmail, songId);
+            setIsPurchased(bought);
+          } catch (e) {
+            console.warn("No se pudo verificar la compra", e);
+          }
+        }
+
+        // 3. Cargar Valoraciones (Develop)
         try {
           const media = await fetchSongRatingAvg(songId);
           setAvgRating(Number(media) || 0);
         } catch {}
 
-        // Rating usuario
-        const email = getStoredUserEmail();
-        if (email) {
+        if (userEmail) {
           try {
-            const myVote = await fetchUserRating(email, songId);
+            const myVote = await fetchUserRating(userEmail, songId);
             if (myVote) {
               setMyRating(myVote.valoracion);
               setHasRated(true);
@@ -159,7 +177,7 @@ const PublicSongDetail = ({ songId, onBack }) => {
           } catch {}
         }
 
-        // Álbum
+        // 4. Cargar Álbum
         if (data.idAlbum != null) {
           try {
             const albumData = await fetchAlbumById(data.idAlbum);
@@ -167,19 +185,27 @@ const PublicSongDetail = ({ songId, onBack }) => {
           } catch {}
         }
 
-        // Artistas
-        if (Array.isArray(data.artistas_emails) && data.artistas_emails.length) {
+        // 5. Cargar Artistas (Resolución combinada)
+        if (
+          Array.isArray(data.artistas_emails) &&
+          data.artistas_emails.length
+        ) {
           try {
             const emails = data.artistas_emails;
-            const artists = await fetchArtistsByEmails(emails);
-            const first = artists[emails[0]];
+            const artistsByEmail = await fetchArtistsByEmails(emails);
+            const firstEmail = emails[0];
+            const artist = artistsByEmail[firstEmail];
+
+            // Lógica prioritaria para nombre
             setArtistName(
-              first?.display_name ||
-              first?.nombre_artistico ||
-              first?.email ||
-              emails[0].split("@")[0]
+              artist?.display_name ||
+                artist?.nombre_artistico ||
+                artist?.email ||
+                firstEmail.split("@")[0],
             );
-          } catch {}
+          } catch (error) {
+            console.warn("Error resolving artist:", error);
+          }
         }
       } catch (e) {
         setErr("No se pudo cargar la canción.");
@@ -193,22 +219,26 @@ const PublicSongDetail = ({ songId, onBack }) => {
 
   // ------------------ REPRODUCCIÓN ------------------
   const handlePlayClick = async () => {
-    if (!song) return;
+    if (!song || !song.id) return;
     setPlays((p) => p + 1);
 
+    // Estadística histórica (Develop)
     const email = getStoredUserEmail();
     postSongReproduction(song.id, email).catch(() => {});
 
+    // Registro real
     try {
       const updated = await registerSongPlay(song.id);
       if (updated?.numVisualizaciones != null) {
         setSong(updated);
         setPlays(updated.numVisualizaciones);
       }
-    } catch {}
+    } catch (error) {
+      console.error(error);
+    }
   };
 
-  // ------------------ RATING ------------------
+  // ------------------ RATING (Develop) ------------------
   const handleUserRate = async (stars) => {
     const email = getStoredUserEmail();
     if (!email) {
@@ -234,6 +264,7 @@ const PublicSongDetail = ({ songId, onBack }) => {
 
       setTimeout(() => setRatingMessage(""), 2000);
     } catch (err) {
+      // Intento de recuperación si falla el PUT
       if (hasRated && err.response?.status === 404) {
         try {
           await postRating(email, song.id, stars);
@@ -244,7 +275,6 @@ const PublicSongDetail = ({ songId, onBack }) => {
           return;
         } catch {}
       }
-
       setRatingMessage("Error al guardar.");
     }
   };
@@ -253,7 +283,8 @@ const PublicSongDetail = ({ songId, onBack }) => {
   const openPurchaseModal = () => {
     setPurchaseError("");
     setPurchaseOk("");
-    if (!localStorage.getItem("authToken")) {
+    const token = localStorage.getItem("authToken");
+    if (!token) {
       setPurchaseError("Necesitas iniciar sesión para comprar.");
     }
     setShowPurchase(true);
@@ -267,7 +298,7 @@ const PublicSongDetail = ({ songId, onBack }) => {
     }
   };
 
-  // ------------------ PDF (versión avanzada tuya) ------------------
+  // ------------------ PDF (Develop) ------------------
   const generateReceiptPDF = (songData, pricePaid, userEmail, artistLabel) => {
     const doc = new jsPDF();
 
@@ -282,8 +313,16 @@ const PublicSongDetail = ({ songId, onBack }) => {
     doc.line(20, 35, 190, 35);
 
     doc.setFontSize(12);
-    doc.text(`Fecha: ${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString()}`, 20, 50);
-    doc.text(`ID Transacción: ${Math.random().toString(36).substr(2, 9).toUpperCase()}`, 20, 60);
+    doc.text(
+      `Fecha: ${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString()}`,
+      20,
+      50,
+    );
+    doc.text(
+      `ID Transacción: ${Math.random().toString(36).substr(2, 9).toUpperCase()}`,
+      20,
+      60,
+    );
     doc.text(`Comprador: ${userEmail}`, 20, 70);
 
     doc.setFillColor(240, 240, 240);
@@ -314,28 +353,31 @@ const PublicSongDetail = ({ songId, onBack }) => {
     doc.setFont("helvetica", "italic");
     doc.setFontSize(10);
     doc.text("Gracias por apoyar la música independiente.", 20, 150);
-    doc.text("Este es un comprobante digital generado automáticamente.", 20, 155);
+    doc.text(
+      "Este es un comprobante digital generado automáticamente.",
+      20,
+      155,
+    );
 
     doc.save(`Recibo_Resound_${songName.replace(/\s+/g, "_")}.pdf`);
   };
 
   const handleConfirmPurchase = async () => {
     if (!song) return;
-
     const token = localStorage.getItem("authToken");
     if (!token) {
       setPurchaseError("Debes iniciar sesión.");
       return;
     }
-
     const email = getStoredUserEmail();
     if (!email) {
       setPurchaseError("No se pudo leer el email.");
       return;
     }
-
     const amount =
-      payAmount === "" || payAmount === null ? null : Number.parseFloat(payAmount);
+      payAmount === "" || payAmount === null
+        ? null
+        : Number.parseFloat(payAmount);
 
     if (payAmount !== "" && (Number.isNaN(amount) || amount < 0)) {
       setPurchaseError("Importe inválido.");
@@ -353,19 +395,28 @@ const PublicSongDetail = ({ songId, onBack }) => {
         userEmail: email,
       });
 
+      // 1. Guardar estadística de compra (Develop)
       try {
         const precioFinal = amount ?? song.precio ?? 0;
         await postSongPurchase(song.id, precioFinal);
       } catch {}
 
+      // 2. Actualizar estado visual (Tu rama)
+      setIsPurchased(true);
       setPurchaseOk("Compra realizada con éxito.");
-      generateReceiptPDF(song, amount, email, artistName || getArtistLabel(song));
 
+      // 3. Generar PDF (Develop)
+      generateReceiptPDF(
+        song,
+        amount,
+        email,
+        artistName || getArtistLabel(song),
+      );
     } catch (error) {
       setPurchaseError(
         error?.response?.data?.detail ||
-        error?.message ||
-        "Error al completar la compra."
+          error?.message ||
+          "Error al completar la compra.",
       );
     } finally {
       setPurchaseLoading(false);
@@ -373,11 +424,26 @@ const PublicSongDetail = ({ songId, onBack }) => {
   };
 
   // ------------------ RENDER ------------------
-  if (loading) return <div>Cargando canción…</div>;
-  if (err || !song) return <div>{err || "Canción no encontrada"}</div>;
+  if (!songId)
+    return (
+      <div className="public-song-detail">
+        <p>No seleccionada.</p>
+      </div>
+    );
+  if (loading) return <div className="loading">Cargando canción…</div>;
+  if (err || !song)
+    return (
+      <div className="public-song-detail">
+        <p className="error">{err || "No encontrada."}</p>
+      </div>
+    );
 
   const coverPath =
-    song.imgPortada || song.imgSencillo || song.portada || song.coverPath || null;
+    song.imgPortada ||
+    song.imgSencillo ||
+    song.portada ||
+    song.coverPath ||
+    null;
   const coverSrc = coverPath
     ? fileURL(coverPath)
     : "https://via.placeholder.com/500x500?text=Sin+portada";
@@ -385,6 +451,7 @@ const PublicSongDetail = ({ songId, onBack }) => {
   const albumTitle = album?.titulo || song.albumTitulo || "Sencillo";
   const artistLabel = artistName || getArtistLabel(song);
 
+  // Fecha (Develop)
   let publishedLabel = null;
   if (song.date) {
     const d = new Date(song.date);
@@ -402,15 +469,13 @@ const PublicSongDetail = ({ songId, onBack }) => {
       )}
 
       <div className="public-song-layout">
-        {/* IZQUIERDA */}
+        {/* IZQUIERDA: Portada + Estrellas */}
         <div className="public-song-cover">
           <img src={coverSrc} alt={song.nomCancion || song.titulo} />
 
           <div className="star-rating-wrapper">
             <StarRating value={avgRating} />
-            <div className="rating-text">
-              Media: {avgRating.toFixed(1)} / 5
-            </div>
+            <div className="rating-text">Media: {avgRating.toFixed(1)} / 5</div>
           </div>
 
           <div className="user-rating-section">
@@ -427,9 +492,9 @@ const PublicSongDetail = ({ songId, onBack }) => {
           </div>
         </div>
 
-        {/* DERECHA */}
+        {/* DERECHA: Info + Botones */}
         <div className="public-song-info">
-          <h2 className="song-title">{song.nomCancion || song.titulo}</h2>
+          <h2 className="song-title">{song.nomCancion || "Sin título"}</h2>
           <div className="song-artist">por {artistLabel}</div>
           <div className="song-album">del álbum {albumTitle}</div>
           {publishedLabel && <div className="song-date">{publishedLabel}</div>}
@@ -442,11 +507,35 @@ const PublicSongDetail = ({ songId, onBack }) => {
           </div>
 
           <div className="song-purchase">
-            <button className="btn-primary" onClick={openPurchaseModal}>
-              Comprar {formatPrice(song.precio)}
-            </button>
+            {/* LOGICA DE VISUALIZACIÓN DE BOTÓN (Tu rama: Muestra verde si comprado) */}
+            {isPurchased ? (
+              <button
+                type="button"
+                className="btn-success"
+                disabled
+                style={{
+                  cursor: "default",
+                  backgroundColor: "#28a745",
+                  color: "white",
+                  border: "none",
+                }}
+              >
+                ✅ Pista comprada
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={openPurchaseModal}
+              >
+                Comprar pista digital {formatPrice(song.precio)}
+              </button>
+            )}
+
             <p className="purchase-note">
-              Recibirás futuras descargas asociadas a tu cuenta.
+              {isPurchased
+                ? "Ya tienes esta canción en tu biblioteca."
+                : "Recibirás la pista y las futuras descargas ligadas a tu cuenta."}
             </p>
           </div>
 
@@ -470,6 +559,9 @@ const PublicSongDetail = ({ songId, onBack }) => {
               📢 Compartir
             </button>
           </div>
+
+          {/* COMENTARIOS (Tu rama) */}
+          {song && <CommentsSection targetType="song" targetId={song.id} />}
         </div>
       </div>
 
@@ -479,10 +571,9 @@ const PublicSongDetail = ({ songId, onBack }) => {
           <div className="modal-card">
             <h3>Confirmar compra</h3>
             <p className="modal-subtitle">
-              {song.nomCancion} · {artistLabel}
+              {song.nomCancion || "Canción"} · {artistLabel}
             </p>
-
-            <label className="modal-label">Importe (€)</label>
+            <label className="modal-label">Importe a pagar (€)</label>
             <input
               type="number"
               min="0"
@@ -492,10 +583,10 @@ const PublicSongDetail = ({ songId, onBack }) => {
               onChange={(e) => setPayAmount(e.target.value)}
               placeholder={`Precio actual: ${formatPrice(song.precio)}`}
             />
-
-            {purchaseError && <div className="modal-error">{purchaseError}</div>}
+            {purchaseError && (
+              <div className="modal-error">{purchaseError}</div>
+            )}
             {purchaseOk && <div className="modal-success">{purchaseOk}</div>}
-
             <div className="modal-actions">
               <button
                 className="btn-secondary"
@@ -504,20 +595,24 @@ const PublicSongDetail = ({ songId, onBack }) => {
               >
                 Cerrar
               </button>
-              <button
-                className="btn-primary"
-                onClick={handleConfirmPurchase}
-                disabled={purchaseLoading}
-              >
-                {purchaseLoading ? "Procesando…" : "Comprar"}
-              </button>
+
+              {!purchaseOk && (
+                <button
+                  type="button"
+                  className="btn-primary"
+                  onClick={handleConfirmPurchase}
+                  disabled={purchaseLoading}
+                >
+                  {purchaseLoading ? "Procesando…" : "Pagar y comprar"}
+                </button>
+              )}
             </div>
           </div>
         </div>
       )}
 
       {/* MODAL PLAYLIST */}
-      {showAddToPlaylist && (
+      {showAddToPlaylist && song && (
         <AddToPlaylistModal
           song={song}
           onClose={() => setShowAddToPlaylist(false)}

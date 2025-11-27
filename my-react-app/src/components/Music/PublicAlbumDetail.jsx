@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 // API PRINCIPAL
-import { jsPDF } from "jspdf"; 
+import { jsPDF } from "jspdf";
 import {
   fetchAlbumById,
   fetchAlbumTracks,
@@ -8,20 +8,22 @@ import {
   registerSongPlay,
   purchaseAlbum,
   getStoredUserEmail,
-} from "../../services/musicApi"; 
+  getPurchasedAlbums, // De tu rama
+} from "../../services/musicApi";
 
-// IMPORTAMOS LAS FUNCIONES DE VALORACIÓN DESDE TU API
-import { 
-  postAlbumPurchase, 
+// IMPORTAMOS LAS FUNCIONES DE VALORACIÓN (De develop)
+import {
+  postAlbumPurchase,
   postSongReproduction,
-  fetchAlbumRatingAvg, 
-  fetchUserRating,     
-  postRating,         
-  updateRating         
+  fetchAlbumRatingAvg,
+  fetchUserRating,
+  postRating,
+  updateRating,
 } from "../../services/api";
 
+import CommentsSection from "./CommentsSection"; // De tu rama
 import AddToPlaylistModal from "./AddToPlaylistModal";
-import ShareModal from "../ShareModal";
+import ShareModal from "../ShareModal"; // De develop
 import { fileURL, formatDate } from "../../utils/helpers";
 import "../../styles/MusicGlobal.css";
 import "../../styles/valoraciones.css"; // Estilos de las estrellas
@@ -31,7 +33,10 @@ const StarRating = ({ value }) => {
   const rating = Math.max(0, Math.min(5, Number(value) || 0));
   const percentage = (rating / 5) * 100;
   return (
-    <div className="star-rating-container" title={`Valoración: ${rating.toFixed(1)}`}>
+    <div
+      className="star-rating-container"
+      title={`Valoración: ${rating.toFixed(1)}`}
+    >
       <div className="star-layer-bg">★★★★★</div>
       <div className="star-layer-fg" style={{ width: `${percentage}%` }}>
         ★★★★★
@@ -78,10 +83,13 @@ const PublicAlbumDetail = ({ albumId, onBack, onOpenSong }) => {
   const [purchaseOk, setPurchaseOk] = useState("");
   const [purchaseLoading, setPurchaseLoading] = useState(false);
 
-  // Estado del modal de compartir
+  // Verificación (De tu rama)
+  const [isAlbumPurchased, setIsAlbumPurchased] = useState(false);
+
+  // Estado del modal de compartir (De develop)
   const [showShareModal, setShowShareModal] = useState(false);
 
-  // --- NUEVOS ESTADOS PARA VALORACIÓN ---
+  // --- NUEVOS ESTADOS PARA VALORACIÓN (De develop) ---
   const [avgRating, setAvgRating] = useState(0);
   const [myRating, setMyRating] = useState(0);
   const [hasRated, setHasRated] = useState(false);
@@ -95,6 +103,7 @@ const PublicAlbumDetail = ({ albumId, onBack, onOpenSong }) => {
       try {
         setLoading(true);
         setError("");
+        setIsAlbumPurchased(false);
         // Reset valoraciones
         setMyRating(0);
         setHasRated(false);
@@ -105,29 +114,41 @@ const PublicAlbumDetail = ({ albumId, onBack, onOpenSong }) => {
           fetchAlbumTracks(albumId),
         ]);
 
+        // Verificación de compra de álbum (Tu lógica)
+        const userEmail = getStoredUserEmail();
+        const token = localStorage.getItem("authToken");
+        if (token && userEmail) {
+          try {
+            const purchasedIds = await getPurchasedAlbums(userEmail);
+            if (purchasedIds.includes(Number(albumId))) {
+              setIsAlbumPurchased(true);
+            }
+          } catch (e) {
+            console.warn("Error verificando compras", e);
+          }
+        }
+
         // B. Procesar Artistas
         let albumWithArtists = albumData;
         try {
           const emails = Array.isArray(albumData.artistas_emails)
             ? albumData.artistas_emails
             : [];
-
           if (emails.length > 0) {
             const artistsByEmail = await fetchArtistsByEmails(emails);
-
             const artistas = emails.map((email) => {
               const artist = artistsByEmail[email];
-              if (artist) {
+              if (artist)
                 return (
                   artist.display_name ||
                   artist.nombre_artistico ||
                   artist.email ||
                   email
                 );
-              }
-              return email.split("@")[0];
+              return typeof email === "string"
+                ? email.split("@")[0]
+                : "Artista";
             });
-
             albumWithArtists = {
               ...albumData,
               artistas,
@@ -144,25 +165,26 @@ const PublicAlbumDetail = ({ albumId, onBack, onOpenSong }) => {
 
         // C. Cargar Media de Valoración (Álbum)
         try {
-            const media = await fetchAlbumRatingAvg(albumId);
-            setAvgRating(Number(media) || 0);
+          const media = await fetchAlbumRatingAvg(albumId);
+          setAvgRating(Number(media) || 0);
         } catch (e) {
-            console.warn("No se pudo cargar la media del álbum", e);
+          console.warn("No se pudo cargar la media del álbum", e);
         }
 
         // D. Cargar Valoración del Usuario (Álbum)
         const email = getStoredUserEmail();
         if (email) {
-            try {
-                // Pasamos songId=null, albumId=albumId
-                const existingVote = await fetchUserRating(email, null, albumId);
-                if (existingVote) {
-                    setMyRating(existingVote.valoracion);
-                    setHasRated(true);
-                }
-            } catch (e) { /* Error silencioso si no ha votado */ }
+          try {
+            // Pasamos songId=null, albumId=albumId
+            const existingVote = await fetchUserRating(email, null, albumId);
+            if (existingVote) {
+              setMyRating(existingVote.valoracion);
+              setHasRated(true);
+            }
+          } catch (e) {
+            /* Error silencioso si no ha votado */
+          }
         }
-
       } catch (err) {
         console.error("Error cargando álbum:", err);
         setError("No se han podido cargar los datos del álbum.");
@@ -176,7 +198,6 @@ const PublicAlbumDetail = ({ albumId, onBack, onOpenSong }) => {
 
   // 2) Track actual y sincronizar reproducciones
   const canciones = tracks;
-
   const currentTrack =
     canciones.length > 0
       ? canciones[Math.min(currentTrackIndex, canciones.length - 1)]
@@ -190,13 +211,12 @@ const PublicAlbumDetail = ({ albumId, onBack, onOpenSong }) => {
   // 3) Registrar reproducción + estadísticas
   const handlePlayClick = async (song) => {
     if (!song || !song.id) return;
-
     setPlays((p) => p + 1);
 
-    // Estadística histórica 
+    // Estadística histórica (Develop)
     const email = getStoredUserEmail();
     postSongReproduction(song.id, email).catch((err) =>
-      console.warn("Aviso: No se pudo guardar estadística histórica", err)
+      console.warn("Aviso: No se pudo guardar estadística histórica", err),
     );
 
     // Registro real de reproducción
@@ -209,12 +229,12 @@ const PublicAlbumDetail = ({ albumId, onBack, onOpenSong }) => {
           prev.map((t) =>
             t.id === song.id
               ? { ...t, numVisualizaciones: updated.numVisualizaciones }
-              : t
-          )
+              : t,
+          ),
         );
       }
     } catch (err) {
-      console.error("Error registrando reproducción:", err);
+      console.error(err);
     }
   };
 
@@ -247,21 +267,20 @@ const PublicAlbumDetail = ({ albumId, onBack, onOpenSong }) => {
       const nuevaMedia = await fetchAlbumRatingAvg(album.id);
       setAvgRating(Number(nuevaMedia) || 0);
       setTimeout(() => setRatingMessage(""), 2000);
-
     } catch (error) {
       // Auto-reparación 404 (Si falla PUT, intenta POST)
       if (hasRated && error.response && error.response.status === 404) {
         console.warn("Sincronización corregida: Cambiando a POST.");
         try {
-            await postRating(email, null, album.id, stars);
-            setHasRated(true);
-            setRatingMessage("¡Valoración guardada!");
-            
-            const nuevaMedia = await fetchAlbumRatingAvg(album.id);
-            setAvgRating(Number(nuevaMedia) || 0);
-            setTimeout(() => setRatingMessage(""), 2000);
+          await postRating(email, null, album.id, stars);
+          setHasRated(true);
+          setRatingMessage("¡Valoración guardada!");
+
+          const nuevaMedia = await fetchAlbumRatingAvg(album.id);
+          setAvgRating(Number(nuevaMedia) || 0);
+          setTimeout(() => setRatingMessage(""), 2000);
         } catch (postError) {
-            setRatingMessage("Error al guardar.");
+          setRatingMessage("Error al guardar.");
         }
       } else {
         setRatingMessage("Error al conectar.");
@@ -275,12 +294,8 @@ const PublicAlbumDetail = ({ albumId, onBack, onOpenSong }) => {
   const openPurchaseModal = () => {
     setPurchaseError("");
     setPurchaseOk("");
-
     const token = localStorage.getItem("authToken");
-    if (!token) {
-      setPurchaseError("Necesitas iniciar sesión para comprar.");
-    }
-
+    if (!token) setPurchaseError("Necesitas iniciar sesión para comprar.");
     setShowPurchase(true);
   };
 
@@ -293,24 +308,16 @@ const PublicAlbumDetail = ({ albumId, onBack, onOpenSong }) => {
 
   const handleConfirmPurchase = async () => {
     if (!album) return;
-
     const token = localStorage.getItem("authToken");
     if (!token) {
       setPurchaseError("Inicia sesión para completar la compra.");
       return;
     }
-
     const email = getStoredUserEmail();
-    if (!email) {
-      setPurchaseError("No se pudo leer el email del usuario.");
-      return;
-    }
-
     const amount =
       payAmount === "" || payAmount === null
         ? null
         : Number.parseFloat(payAmount);
-
     if (payAmount !== "" && (Number.isNaN(amount) || amount < 0)) {
       setPurchaseError("Introduce un importe válido.");
       return;
@@ -318,7 +325,6 @@ const PublicAlbumDetail = ({ albumId, onBack, onOpenSong }) => {
 
     setPurchaseLoading(true);
     setPurchaseError("");
-    setPurchaseOk("");
 
     try {
       await purchaseAlbum({
@@ -327,23 +333,20 @@ const PublicAlbumDetail = ({ albumId, onBack, onOpenSong }) => {
         userEmail: email,
       });
 
+      // Registrar estadística de compra (Develop)
       try {
         const precioFinal =
           amount !== null ? amount : Number(album.precio ?? 0);
-
         await postAlbumPurchase(album.id, precioFinal);
       } catch (statsErr) {
         console.warn("Fallo estadística compra:", statsErr);
       }
 
-      setPurchaseOk(
-        "Álbum comprado correctamente. Todas las pistas quedan asociadas a tu cuenta."
-      );
+      setPurchaseOk("Álbum comprado correctamente.");
+      setIsAlbumPurchased(true); // Actualizar estado local
     } catch (err) {
       const msg =
-        err?.response?.data?.detail ||
-        err?.message ||
-        "No se pudo completar la compra del álbum.";
+        err?.response?.data?.detail || err?.message || "Error compra.";
       setPurchaseError(msg);
     } finally {
       setPurchaseLoading(false);
@@ -357,26 +360,17 @@ const PublicAlbumDetail = ({ albumId, onBack, onOpenSong }) => {
   if (!album) return <div className="no-content">Álbum no encontrado.</div>;
 
   const cover =
-    fileURL(album.imgPortada || album.portada || album.coverPath) ||
-    "/placeholder-album.png";
-
-  const rawGenres = album.genre || album.genres || [];
-  const genresText = Array.isArray(rawGenres)
-    ? rawGenres.join(", ")
-    : String(rawGenres || "");
-
-  const artistNames =
-    album.artistas_display ||
-    (Array.isArray(album.artistas)
-      ? album.artistas.join(", ")
-      : "Varios artistas");
-
+    fileURL(album.imgPortada || album.portada) || "/placeholder-album.png";
+  const artistNames = album.artistas_display || "Varios artistas";
   const price = Number(album.precio ?? 0);
+
+  // Variable auxiliar para mostrar géneros si existieran en el objeto album (opcional)
+  const genresText = album.generos ? album.generos.join(", ") : "";
 
   return (
     <section className="album-page">
       <button type="button" className="btn-back" onClick={onBack}>
-        ← Volver al catálogo de álbumes
+        ← Volver al catálogo
       </button>
 
       <div className="album-layout">
@@ -388,9 +382,7 @@ const PublicAlbumDetail = ({ albumId, onBack, onOpenSong }) => {
             {album.date && (
               <p className="album-meta">Lanzado el {formatDate(album.date)}</p>
             )}
-            {genresText && (
-              <p className="album-meta">Géneros: {genresText}</p>
-            )}
+            {genresText && <p className="album-meta">Géneros: {genresText}</p>}
 
             {currentTrack && (
               <div className="album-player">
@@ -402,7 +394,6 @@ const PublicAlbumDetail = ({ albumId, onBack, onOpenSong }) => {
                   ▶
                 </button>
                 <span>Reproducciones: {plays}</span>
-
                 <div className="album-player-info">
                   <div className="player-track-title">
                     {currentTrack.nomCancion || currentTrack.titulo}
@@ -412,18 +403,33 @@ const PublicAlbumDetail = ({ albumId, onBack, onOpenSong }) => {
             )}
 
             <div className="album-purchase">
-              <button
-                type="button"
-                className="btn-primary"
-                onClick={openPurchaseModal}
-              >
-                Comprar álbum digital completo{" "}
-                {price > 0
-                  ? `${price.toFixed(2)} € o más`
-                  : "(elige tu precio)"}
-              </button>
+              {isAlbumPurchased ? (
+                <button
+                  type="button"
+                  className="btn-success"
+                  disabled
+                  style={{
+                    cursor: "default",
+                    backgroundColor: "#28a745",
+                    color: "white",
+                    border: "none",
+                    width: "100%",
+                  }}
+                >
+                  ✅ Álbum Comprado
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="btn-primary"
+                  onClick={openPurchaseModal}
+                >
+                  Comprar álbum digital completo{" "}
+                  {price > 0 ? `${price.toFixed(2)} € o más` : "(elige precio)"}
+                </button>
+              )}
 
-              {/* BOTÓN DE COMPARTIR */}
+              {/* BOTÓN DE COMPARTIR (De develop) */}
               <button
                 type="button"
                 className="btn-secondary"
@@ -440,7 +446,9 @@ const PublicAlbumDetail = ({ albumId, onBack, onOpenSong }) => {
               </button>
 
               <p className="purchase-note">
-                Incluye todas las canciones del álbum en tu biblioteca digital.
+                {isAlbumPurchased
+                  ? "Ya posees este álbum y todas sus canciones."
+                  : "Incluye todas las canciones del álbum en tu biblioteca digital."}
               </p>
             </div>
           </div>
@@ -449,21 +457,20 @@ const PublicAlbumDetail = ({ albumId, onBack, onOpenSong }) => {
           <div className="album-tracklist">
             <h3>Lista de canciones</h3>
             {canciones.length === 0 ? (
-              <p className="no-content">
-                Este álbum todavía no tiene canciones asociadas.
-              </p>
+              <p>Vacío</p>
             ) : (
               <ol>
-                {canciones.map((song, index) => {
-                  const isActive = index === currentTrackIndex;
-                  return (
-                    <li
-                      key={song.id}
-                      className={`track-item ${isActive ? "active" : ""}`}
-                      onClick={() => {
-                        setCurrentTrackIndex(index);
-                        if (onOpenSong) onOpenSong(song.id);
-                      }}
+                {canciones.map((song, index) => (
+                  <li
+                    key={song.id}
+                    className={`track-item ${index === currentTrackIndex ? "active" : ""}`}
+                    onClick={() => {
+                      setCurrentTrackIndex(index);
+                      if (onOpenSong) onOpenSong(song.id);
+                    }}
+                  >
+                    <div
+                      style={{ display: "flex", alignItems: "center", flex: 1 }}
                     >
                       <button
                         type="button"
@@ -476,80 +483,76 @@ const PublicAlbumDetail = ({ albumId, onBack, onOpenSong }) => {
                       >
                         ▶
                       </button>
-
                       <span className="track-number">{index + 1}.</span>
                       <span className="track-title">
                         {song.nomCancion || song.titulo}
                       </span>
+                    </div>
 
-                      {typeof song.precio === "number" && (
-                        <span className="track-price">
-                          {song.precio.toFixed(2)} €
-                        </span>
-                      )}
-                    </li>
-                  );
-                })}
+                    {typeof song.precio === "number" && (
+                      <span className="track-price">
+                        {song.precio.toFixed(2)} €
+                      </span>
+                    )}
+                  </li>
+                ))}
               </ol>
             )}
           </div>
         </div>
 
-        {/* PORTADA */}
+        {/* PORTADA + VALORACIONES */}
         <div className="album-cover-side">
           <img src={cover} alt={album.titulo} />
 
           {/* ======================================= */}
-          {/* SECCIÓN DE VALORACIÓN (AÑADIDA AQUÍ) */}
+          {/* SECCIÓN DE VALORACIÓN (De develop) */}
           {/* ======================================= */}
-          
+
           {/* 1. Media Visual */}
           <div className="star-rating-wrapper" style={{ marginTop: "15px" }}>
-             <StarRating value={avgRating} />
-             <div className="rating-text">
-                Media: {avgRating.toFixed(1)} <span>/ 5</span>
-             </div>
+            <StarRating value={avgRating} />
+            <div className="rating-text">
+              Media: {avgRating.toFixed(1)} <span>/ 5</span>
+            </div>
           </div>
 
           {/* 2. Valoración Interactiva */}
           <div className="user-rating-section">
-             <div className="user-rating-title">
-                 {hasRated ? "Tu valoración" : "Valora este álbum"}
-             </div>
-             
-             <InteractiveRating 
-                 currentRating={myRating} 
-                 onRate={handleUserRate} 
-             />
-             
-             <div className="rating-msg">{ratingMessage}</div>
+            <div className="user-rating-title">
+              {hasRated ? "Tu valoración" : "Valora este álbum"}
+            </div>
+
+            <InteractiveRating
+              currentRating={myRating}
+              onRate={handleUserRate}
+            />
+
+            <div className="rating-msg">{ratingMessage}</div>
           </div>
           {/* ======================================= */}
-
         </div>
       </div>
+
+      {/* 2. IMPORTANTE: Añadir la sección de comentarios (De tu rama) */}
+      {album && (
+        <div style={{ marginTop: "40px" }}>
+          <CommentsSection targetType="album" targetId={album.id} />
+        </div>
+      )}
 
       {/* MODAL COMPRA */}
       {showPurchase && (
         <div className="modal-backdrop">
           <div className="modal-card">
             <h3>Comprar álbum completo</h3>
-            <p className="modal-subtitle">
-              {album.titulo} · {artistNames}
-            </p>
-
-            <label className="modal-label" htmlFor="album-price">
-              Importe a pagar (€)
-            </label>
             <input
-              id="album-price"
               type="number"
-              min={Math.max(0, Number(album.precio ?? 0))}
+              min={price}
               step="0.01"
               className="modal-input"
               value={payAmount}
               onChange={(e) => setPayAmount(e.target.value)}
-              placeholder="Usa el precio base del álbum"
             />
             <p className="modal-hint">
               Precio mínimo:{" "}
@@ -561,7 +564,6 @@ const PublicAlbumDetail = ({ albumId, onBack, onOpenSong }) => {
               <div className="modal-error">{purchaseError}</div>
             )}
             {purchaseOk && <div className="modal-success">{purchaseOk}</div>}
-
             <div className="modal-actions">
               <button
                 type="button"
@@ -571,20 +573,22 @@ const PublicAlbumDetail = ({ albumId, onBack, onOpenSong }) => {
               >
                 Cancelar
               </button>
-              <button
-                type="button"
-                className="btn-primary"
-                onClick={handleConfirmPurchase}
-                disabled={purchaseLoading}
-              >
-                {purchaseLoading ? "Procesando…" : "Pagar y comprar"}
-              </button>
+              {!purchaseOk && (
+                <button
+                  type="button"
+                  className="btn-primary"
+                  onClick={handleConfirmPurchase}
+                  disabled={purchaseLoading}
+                >
+                  {purchaseLoading ? "Procesando…" : "Pagar y comprar"}
+                </button>
+              )}
             </div>
           </div>
         </div>
       )}
 
-      {/* MODAL COMPARTIR */}
+      {/* MODAL COMPARTIR (De develop) */}
       <ShareModal
         isOpen={showShareModal}
         onClose={() => setShowShareModal(false)}
