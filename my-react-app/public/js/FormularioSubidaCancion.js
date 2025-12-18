@@ -1,12 +1,11 @@
 // FormularioSubidaCancion.js
 // -------------------------------------------------------------
 
-// Backend de CONTENIDOS (Puerto 8080)
-const API_BASE = "http://127.0.0.1:8080";
+// Backend principal (álbumes, canciones, géneros)
+const API_BASE = window._env_?.CONTENIDO_URL || "http://127.0.0.1:8080";
 
-// Backend de ESTADÍSTICAS (Puerto 8081)
-const STATS_BASE_URL = "http://localhost:8081";
-
+// Backend de estadísticas
+const API_STATS = window._env_?.ESTADISTICAS_URL || "http://127.0.0.1:8081";
 // -------------------------------------------------------------
 document.addEventListener("DOMContentLoaded", () => {
   const form = document.getElementById("uploadSongForm");

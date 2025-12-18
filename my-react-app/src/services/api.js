@@ -1,8 +1,8 @@
 import axios from "axios";
 
-const API_BASE_URL = 'http://127.0.0.1:8001';
-const COMPRAS_API_URL = 'http://127.0.0.1:8080/api';
-const STATS_BASE_URL = "http://localhost:8081";
+const API_BASE_URL = window._env_?.USUARIOS_URL || 'http://127.0.0.1:8001';
+const COMPRAS_API_URL = window._env_?.CONTENIDO_URL || 'http://127.0.0.1:8080/api';
+const STATS_BASE_URL = window._env_?.ESTADISTICAS_URL || "http://localhost:8081";
 
 export const fetchArtistSongs = async (artistEmail) => {
   try {
@@ -536,7 +536,7 @@ export const fileURL = (relativePath) => {
  * FUNCIONES DE VALORACIONES DE CANCIONES
  *****************************************/
 
-const RATING_URL = "http://localhost:8081/api"; 
+const RATING_URL = `${STATS_BASE_URL}/api`; 
 
 // 1. Obtener media de CANCIÓN
 export const fetchSongRatingAvg = async (songId) => {

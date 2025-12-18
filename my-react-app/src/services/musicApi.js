@@ -1,7 +1,7 @@
 import axios from "axios";
 
-const CONTENTS_BASE_URL = "http://127.0.0.1:8080/api";
-const USERS_BASE_URL = "http://127.0.0.1:8001"; // msUsuarios
+const CONTENTS_BASE_URL = window._env_?.CONTENIDO_URL || "http://127.0.0.1:8080/api";
+const USERS_BASE_URL = window._env_?.USUARIOS_URL || "http://127.0.0.1:8001"; // msUsuarios
 
 const api = axios.create({
   baseURL: CONTENTS_BASE_URL,

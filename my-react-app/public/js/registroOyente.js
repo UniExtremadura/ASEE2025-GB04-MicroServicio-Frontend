@@ -7,7 +7,8 @@ document.addEventListener('DOMContentLoaded', function() {
     const preview = document.getElementById('previewImg');
 
     // URL del microservicio
-    const USER_API = 'http://127.0.0.1:8001/usuarios/registro';
+    const BASE_URL = window._env_?.USUARIOS_URL || 'http://127.0.0.1:8001';
+    const USER_API = `${BASE_URL}/usuarios/registro`;
 
     // Previsualización de imagen
     imgInput?.addEventListener('change', (ev) => {

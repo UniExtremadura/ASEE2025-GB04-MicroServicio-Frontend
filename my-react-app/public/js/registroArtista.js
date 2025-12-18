@@ -5,7 +5,7 @@ document.addEventListener('DOMContentLoaded', function () {
   const pwd2 = document.getElementById('password2');
   const imgInput = document.getElementById('img_perfil');
   const preview = document.getElementById('previewImg');
-
+  const USERS_API = window._env_?.USUARIOS_URL || 'http://127.0.0.1:8001';
   // 🖼️ Previsualizar imagen seleccionada
   imgInput?.addEventListener('change', (ev) => {
     const file = ev.target.files && ev.target.files[0];
@@ -57,7 +57,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
     // ✅ Enviar al backend (sin headers manuales)
     try {
-      const response = await fetch("http://127.0.0.1:8001/artistas/register", {
+      const response = await fetch(`${USERS_API}/artistas/register`, {
         method: "POST",
         body: formData,
       });

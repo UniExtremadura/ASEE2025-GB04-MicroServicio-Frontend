@@ -4,6 +4,8 @@ document.addEventListener('DOMContentLoaded', function () {
   const passwordInput = document.getElementById('password');
   const eyeIcon = togglePassword.querySelector('.eye-icon');
 
+  const USERS_API = window._env_?.USUARIOS_URL || 'http://127.0.0.1:8001';
+
   // 👁️ Alternar visibilidad de contraseña
   togglePassword.addEventListener('click', () => {
     const type = passwordInput.type === 'password' ? 'text' : 'password';
@@ -28,7 +30,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
     try {
       // Endpoint actualizado de autenticación
-      const response = await fetch('http://127.0.0.1:8001/auth/login', {
+      const response = await fetch(`${USERS_API}/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password }),
